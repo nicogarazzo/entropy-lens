@@ -1,0 +1,30 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Results (large files, regenerable)
+results/
+*.csv
+*.png
+
+# Models (downloaded from HF)
+models/
+
+# OS
+.DS_Store
+Thumbs.db
