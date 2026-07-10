@@ -60,9 +60,41 @@ PROJ_MARKERS = {
 }
 
 
+def _derive_model_name(model_id: str) -> str:
+    """Derive a clean model name from a model ID or local path.
+
+    For HuggingFace IDs like 'mistralai/Mistral-7B-v0.3', returns 'mistralai_Mistral-7B-v0.3'.
+    For local paths like '/path/to/models--mistralai--Mistral-7B-v0.3/snapshots/abc123',
+    reads config.json _name_or_path or derives from the HF cache directory structure.
+    """
+    local = Path(model_id)
+    if local.is_dir():
+        # Try config.json _name_or_path first
+        config_path = local / "config.json"
+        if config_path.exists():
+            import json
+            with open(config_path) as f:
+                config = json.load(f)
+            name_or_path = config.get("_name_or_path", "")
+            if "/" in name_or_path and not name_or_path.startswith("/"):
+                return name_or_path.replace("/", "_")
+
+        # Try HF cache pattern: models--{org}--{name}/snapshots/{hash}
+        parts = str(local).split("/")
+        for part in parts:
+            if part.startswith("models--"):
+                # models--mistralai--Mistral-7B-v0.3 -> mistralai_Mistral-7B-v0.3
+                return part.replace("models--", "").replace("--", "_", 1)
+
+        # Fallback: last meaningful directory component
+        return local.name
+
+    return model_id.replace("/", "_")
+
+
 def analyze_model(model_id: str, output_base: str = "results") -> dict:
     """Run full analysis on a single model."""
-    safe_name = model_id.replace("/", "_")
+    safe_name = _derive_model_name(model_id)
     out_dir = Path(output_base) / safe_name
     out_dir.mkdir(parents=True, exist_ok=True)
 

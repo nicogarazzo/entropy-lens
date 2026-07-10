@@ -17,10 +17,9 @@ env/
 *.swp
 *.swo
 
-# Results (large files, regenerable)
-results/
-*.csv
-*.png
+# Results (PNGs are regenerable, CSVs and JSONs are kept)
+results/**/*.png
+
 
 # Models (downloaded from HF)
 models/
