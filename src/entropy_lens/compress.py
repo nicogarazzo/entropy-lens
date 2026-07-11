@@ -75,21 +75,43 @@ def _frobenius_error(original: torch.Tensor, reconstructed: torch.Tensor) -> flo
 
 def _build_canonical_to_statedict_map(
     extractor,
-) -> dict[str, list[str]]:
-    """Build mapping from canonical name to state_dict key(s).
-
-    For most architectures this is 1:1. For GPT-2's fused c_attn,
-    multiple canonical names (q/k/v_proj) map to the same state_dict key,
-    so we handle that separately.
+) -> dict[str, str]:
+    """Build mapping from canonical name to safetensors-style key.
 
     Returns:
-        dict mapping canonical name -> list of state_dict keys.
-        (Usually a single-element list, except for fused weights.)
+        dict mapping canonical name -> safetensors key (e.g., "h.0.attn.c_attn.weight").
     """
     mapping = {}
     for canonical, st_key in extractor.iter_weight_names():
         mapping[canonical] = st_key
     return mapping
+
+
+# Common prefixes that differ between safetensors keys and PyTorch state_dict keys.
+_PREFIX_CANDIDATES = ["", "model.", "transformer."]
+
+
+def _resolve_state_dict_key(st_key: str, state_dict_keys: set[str]) -> str | None:
+    """Find the actual state_dict key matching a safetensors-style key.
+
+    Tries the key as-is, then with common prefixes added/removed.
+    """
+    if st_key in state_dict_keys:
+        return st_key
+
+    # Strip any existing prefix and try all candidates
+    bare_key = st_key
+    for prefix in _PREFIX_CANDIDATES[1:]:
+        if st_key.startswith(prefix):
+            bare_key = st_key[len(prefix):]
+            break
+
+    for prefix in _PREFIX_CANDIDATES:
+        candidate = prefix + bare_key
+        if candidate in state_dict_keys:
+            return candidate
+
+    return None
 
 
 def _is_fused_architecture(extractor) -> bool:
@@ -141,12 +163,11 @@ def compress_model(
     model = AutoModelForCausalLM.from_pretrained(
         model_dir,
         torch_dtype=torch_dtype,
-        device_map="cpu",
-        low_cpu_mem_usage=True,
     )
     logger.info("Model loaded in %.1fs", time.time() - t0)
 
     state_dict = model.state_dict()
+    sd_keys = set(state_dict.keys())
     errors = {}
     compressed_count = 0
     skipped_count = 0
@@ -171,7 +192,13 @@ def compress_model(
                 skipped_count += len(canonical_names)
                 continue
 
-            weight = state_dict[st_key]
+            actual_key = _resolve_state_dict_key(st_key, sd_keys)
+            if actual_key is None:
+                logger.warning("Fused key not found: %s. Skipping.", st_key)
+                skipped_count += len(canonical_names)
+                continue
+
+            weight = state_dict[actual_key]
             original_weight = weight.clone() if verify else None
 
             # Split into individual projections
@@ -201,7 +228,7 @@ def compress_model(
 
             # Rejoin: concatenate along the split dimension (dim=1 for GPT-2 c_attn)
             rejoined = torch.cat(compressed_parts, dim=1)
-            state_dict[st_key] = rejoined
+            state_dict[actual_key] = rejoined
 
             del weight, compressed_parts
             if original_weight is not None:
@@ -214,7 +241,14 @@ def compress_model(
                 continue
 
             rank = ranks[canonical]
-            weight = state_dict[st_key]
+
+            actual_key = _resolve_state_dict_key(st_key, sd_keys)
+            if actual_key is None:
+                logger.warning("Key not found: %s. Skipping.", st_key)
+                skipped_count += 1
+                continue
+
+            weight = state_dict[actual_key]
             original_weight = weight.clone() if verify else None
 
             compressed = _svd_truncate(weight, rank)
@@ -228,7 +262,7 @@ def compress_model(
                 )
                 del original_weight
 
-            state_dict[st_key] = compressed
+            state_dict[actual_key] = compressed
             compressed_count += 1
             del weight
 
@@ -241,23 +275,11 @@ def compress_model(
 
             rank = ranks[canonical]
 
-            # The state_dict key might need "model." prefix adjustment
-            actual_key = st_key
-            if actual_key not in state_dict:
-                # Try without "model." prefix
-                if actual_key.startswith("model."):
-                    alt = actual_key[len("model."):]
-                else:
-                    alt = "model." + actual_key
-                if alt in state_dict:
-                    actual_key = alt
-                else:
-                    logger.warning(
-                        "Key not found in state_dict: %s (tried %s). Skipping.",
-                        st_key, alt,
-                    )
-                    skipped_count += 1
-                    continue
+            actual_key = _resolve_state_dict_key(st_key, sd_keys)
+            if actual_key is None:
+                logger.warning("Key not found: %s. Skipping.", st_key)
+                skipped_count += 1
+                continue
 
             weight = state_dict[actual_key]
             original_weight = weight.clone() if verify else None
