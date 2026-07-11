@@ -1,0 +1,11 @@
+torch>=2.1
+transformers>=4.36
+safetensors>=0.4
+numpy
+scipy
+matplotlib
+click>=8.0
+tqdm
+huggingface-hub>=0.20
+gradio>=4.0
+pandas
