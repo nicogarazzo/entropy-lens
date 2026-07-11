@@ -23,6 +23,8 @@ dependencies = [
     "matplotlib",
     "tqdm",
     "huggingface-hub>=0.20",
+    "peft>=0.8",
+    "datasets>=2.14",
 ]
 
 [project.optional-dependencies]

@@ -109,17 +109,56 @@ def _resolve_head_dim(config: dict) -> dict:
     return c
 
 
+# GPT-2 shape map: Conv1D stores (in_features, out_features).
+# c_attn splits into Q/K/V each (n_embd, n_embd).
+# c_fc is (n_embd, 4*n_embd), c_proj is (4*n_embd, n_embd) in Conv1D layout.
+_GPT2_SHAPE_MAP = {
+    "q_proj": lambda c: (c["hidden_size"], c["hidden_size"]),
+    "k_proj": lambda c: (c["hidden_size"], c["hidden_size"]),
+    "v_proj": lambda c: (c["hidden_size"], c["hidden_size"]),
+    "o_proj": lambda c: (c["hidden_size"], c["hidden_size"]),
+    "up_proj": lambda c: (c["hidden_size"], c["intermediate_size"]),
+    "down_proj": lambda c: (c["intermediate_size"], c["hidden_size"]),
+}
+
+
+def _normalize_config(raw: dict) -> dict:
+    """Normalize architecture-specific config keys to canonical names."""
+    c = dict(raw)
+    # GPT-2: n_embd -> hidden_size, n_head -> num_attention_heads
+    if "n_embd" in c and "hidden_size" not in c:
+        c["hidden_size"] = c["n_embd"]
+    if "n_head" in c and "num_attention_heads" not in c:
+        c["num_attention_heads"] = c["n_head"]
+    if "n_inner" in c and "intermediate_size" not in c:
+        c["intermediate_size"] = c["n_inner"]
+    # GPT-2 default: intermediate_size = 4 * hidden_size
+    if "intermediate_size" not in c and "hidden_size" in c:
+        c["intermediate_size"] = 4 * c["hidden_size"]
+    return c
+
+
 def infer_shapes_from_config(config_path: str | Path) -> dict[str, tuple[int, int]]:
     """Read a HuggingFace config.json and return {proj_type: (m, n)} shapes.
 
-    Works for LLaMA/Mistral/Qwen families.
+    Works for LLaMA/Mistral/Qwen families and GPT-2.
     """
     with open(config_path) as f:
         raw = json.load(f)
 
-    config = _resolve_head_dim(raw)
+    normalized = _normalize_config(raw)
+    model_type = raw.get("model_type", "").lower()
+
+    # Pick the right shape map
+    if model_type == "gpt2":
+        shape_map = _GPT2_SHAPE_MAP
+        config = normalized
+    else:
+        config = _resolve_head_dim(normalized)
+        shape_map = _LLAMA_SHAPE_MAP
+
     shapes = {}
-    for proj_type, shape_fn in _LLAMA_SHAPE_MAP.items():
+    for proj_type, shape_fn in shape_map.items():
         try:
             shapes[proj_type] = shape_fn(config)
         except KeyError:

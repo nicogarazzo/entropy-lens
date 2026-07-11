@@ -230,5 +230,61 @@ def compress(model_path: str, ranks: str, output: str, dtype: str, no_verify: bo
         click.echo(f"\nReconstruction errors: mean={mean_err:.4f}, max={max_err:.4f}")
 
 
+@main.command()
+@click.argument("model_path")
+@click.option("--output", "-o", required=True, help="Output directory for healed model.")
+@click.option("--dataset", "-d", default="wikitext", help="Training dataset (wikitext, slim_pajama, alpaca).")
+@click.option("--steps", default=500, type=int, help="Number of training steps.")
+@click.option("--lr", default=2e-4, type=float, help="Learning rate.")
+@click.option("--lora-rank", default=16, type=int, help="LoRA adapter rank.")
+@click.option("--lora-alpha", default=32, type=int, help="LoRA alpha scaling.")
+@click.option("--batch-size", default=4, type=int, help="Micro-batch size.")
+@click.option("--max-seq-len", default=512, type=int, help="Sequence length for training.")
+@click.option("--dtype", default="float32", help="Model dtype (float16, bfloat16, float32).")
+def heal(
+    model_path: str,
+    output: str,
+    dataset: str,
+    steps: int,
+    lr: float,
+    lora_rank: int,
+    lora_alpha: int,
+    batch_size: int,
+    max_seq_len: int,
+    dtype: str,
+):
+    """Heal a compressed model with LoRA fine-tuning.
+
+    Takes a compressed model and does a short fine-tune to recover accuracy
+    lost during SVD truncation. Uses next-token prediction with LoRA adapters.
+    """
+    import logging
+
+    from .heal import heal_model
+
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+
+    click.echo(f"Model: {model_path}")
+    click.echo(f"Output: {output}")
+    click.echo(f"Dataset: {dataset}")
+    click.echo(f"Steps: {steps} | LR: {lr} | LoRA rank: {lora_rank}")
+    click.echo()
+
+    heal_model(
+        model_path=model_path,
+        output_path=output,
+        dataset=dataset,
+        lora_rank=lora_rank,
+        lora_alpha=lora_alpha,
+        learning_rate=lr,
+        num_steps=steps,
+        batch_size=batch_size,
+        max_seq_len=max_seq_len,
+        dtype=dtype,
+    )
+
+    click.echo("\nHealing complete.")
+
+
 if __name__ == "__main__":
     main()
