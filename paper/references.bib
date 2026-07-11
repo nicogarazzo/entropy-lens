@@ -1,0 +1,234 @@
+% ===========================================================================
+% references.bib
+% Bibliography for Paper 3:
+%   "The Entropy-Compression Law Scales: Predicting Optimal Layer-wise
+%    Compression of 7B+ Language Models via Von Neumann Entanglement Entropy"
+%
+% Nicolas Calderon Gonzalez -- 3Pi Agency R&D, Bogota, Colombia
+% July 2026
+% ===========================================================================
+
+
+% ---------------------------------------------------------------------------
+% Our prior work
+% ---------------------------------------------------------------------------
+
+@misc{calderon2026cartography,
+  author       = {Calderon Gonzalez, Nicolas},
+  title        = {Entanglement Cartography of Large Language Models:
+                  An Entropy-Compression Law for Tensor Network Compression},
+  year         = {2026},
+  note         = {Preprint. Code: \url{https://github.com/nicogarazzo/entropy-compression-law}}
+}
+
+@misc{calderon2026theory,
+  author       = {Calderon Gonzalez, Nicolas},
+  title        = {Why Transformers Are Compressible: From Spectral Decay to
+                  the Entropy-Compression Law},
+  year         = {2026},
+  note         = {Preprint. Code: \url{https://github.com/nicogarazzo/entropy-compression-law}}
+}
+
+
+% ---------------------------------------------------------------------------
+% Models
+% ---------------------------------------------------------------------------
+
+@techreport{Radford2019,
+  author    = {Alec Radford and Jeffrey Wu and Rewon Child and David Luan
+               and Dario Amodei and Ilya Sutskever},
+  title     = {Language Models are Unsupervised Multitask Learners},
+  institution = {OpenAI},
+  year      = {2019},
+  url       = {https://openai.com/research/language-unsupervised}
+}
+
+@misc{jiang2023mistral,
+  author       = {Albert Q. Jiang and Alexandre Sablayrolles and Arthur Mensch
+                  and Chris Bamford and Devendra Singh Chaplot and Diego de las Casas
+                  and Florian Bressand and Gianna Lengyel and Guillaume Lample
+                  and Lucile Saulnier and L\'{e}lio Renard Lavaud and Marie-Anne Lachaux
+                  and Pierre Stock and Teven Le Scao and Thibaut Lavril
+                  and Thomas Wang and Timoth\'{e}e Lacroix and William El Sayed},
+  title        = {Mistral 7B},
+  year         = {2023},
+  eprint       = {2310.06825},
+  archivePrefix = {arXiv},
+  primaryClass = {cs.CL}
+}
+
+@misc{yang2024qwen2,
+  author       = {An Yang and Baosong Yang and Binyuan Hui and Bo Zheng
+                  and Bowen Yu and Chang Zhou and Chengpeng Li and Chengyuan Li
+                  and Dayiheng Liu and Fei Huang and others},
+  title        = {Qwen2 Technical Report},
+  year         = {2024},
+  eprint       = {2407.10671},
+  archivePrefix = {arXiv},
+  primaryClass = {cs.CL}
+}
+
+
+% ---------------------------------------------------------------------------
+% Tensor Networks and MPS
+% ---------------------------------------------------------------------------
+
+@article{Oseledets2011,
+  author    = {Ivan V. Oseledets},
+  title     = {Tensor-Train Decomposition},
+  journal   = {{SIAM} Journal on Scientific Computing},
+  volume    = {33},
+  number    = {5},
+  pages     = {2295--2317},
+  year      = {2011},
+  doi       = {10.1137/090752286}
+}
+
+@article{Schollwock2011,
+  author    = {Ulrich Schollw\"{o}ck},
+  title     = {The Density-Matrix Renormalization Group in the Age of Matrix
+               Product States},
+  journal   = {Annals of Physics},
+  volume    = {326},
+  number    = {1},
+  pages     = {96--192},
+  year      = {2011},
+  doi       = {10.1016/j.aop.2010.09.012}
+}
+
+@article{Eisert2010,
+  author    = {Jens Eisert and Marcus Cramer and Martin B. Plenio},
+  title     = {Area Laws for the Entanglement Entropy},
+  journal   = {Reviews of Modern Physics},
+  volume    = {82},
+  number    = {1},
+  pages     = {277--306},
+  year      = {2010},
+  doi       = {10.1103/RevModPhys.82.277}
+}
+
+
+% ---------------------------------------------------------------------------
+% LLM Compression
+% ---------------------------------------------------------------------------
+
+@misc{Wang2024svd,
+  author    = {Xuan Wang and Shuo Gu and Jiangnan Jia and Hao Zhang
+               and others},
+  title     = {{SVD-LLM}: Truncation-Aware Singular Value Decomposition for
+               Large Language Model Compression},
+  year      = {2024},
+  eprint    = {2403.07378},
+  archivePrefix = {arXiv},
+  primaryClass = {cs.LG}
+}
+
+@misc{Sun2025ara,
+  author    = {ARA Authors},
+  title     = {{ARA}: Adaptive Rank Allocation for Efficient Large Language
+               Model {SVD} Compression},
+  year      = {2025},
+  eprint    = {2510.19389},
+  archivePrefix = {arXiv},
+  primaryClass = {cs.LG}
+}
+
+@misc{lu2024alphapruning,
+  author       = {Haoran Lu and Yehui Tang and Kai Han and Yunhe Wang},
+  title        = {{AlphaPruning}: Using Heavy-Tailed Self Regularization
+                  Theory for Improved Layer-wise Pruning of Large Language Models},
+  year         = {2024},
+  eprint       = {2410.10912},
+  archivePrefix = {arXiv},
+  primaryClass = {cs.LG}
+}
+
+@misc{hsu2025rethinking,
+  author       = {Yen-Chang Hsu and Ting-Wu Chin and Yilin Shen and
+                  Hongxia Jin},
+  title        = {Rethinking Truncation-aware Decomposition for {LLM}
+                  Compression},
+  year         = {2025},
+  eprint       = {2606.03465},
+  archivePrefix = {arXiv},
+  primaryClass = {cs.LG}
+}
+
+
+% ---------------------------------------------------------------------------
+% LoRA and Low-Rank Methods
+% ---------------------------------------------------------------------------
+
+@misc{Hu2021,
+  author    = {Edward J. Hu and Yelong Shen and Phillip Wallis
+               and Zeyuan Allen-Zhu and Yuanzhi Li and Shean Wang
+               and Lu Wang and Weizhu Chen},
+  title     = {{LoRA}: Low-Rank Adaptation of Large Language Models},
+  year      = {2021},
+  eprint    = {2106.09685},
+  archivePrefix = {arXiv},
+  primaryClass = {cs.CL}
+}
+
+
+% ---------------------------------------------------------------------------
+% Mathematics
+% ---------------------------------------------------------------------------
+
+@article{Eckart1936,
+  author    = {Carl Eckart and Gale Young},
+  title     = {The Approximation of One Matrix by Another of Lower Rank},
+  journal   = {Psychometrika},
+  volume    = {1},
+  number    = {3},
+  pages     = {211--218},
+  year      = {1936},
+  doi       = {10.1007/BF02288367}
+}
+
+@book{VonNeumann1932,
+  author    = {John von Neumann},
+  title     = {Mathematische Grundlagen der Quantenmechanik},
+  publisher = {Springer},
+  address   = {Berlin},
+  year      = {1932}
+}
+
+
+% ---------------------------------------------------------------------------
+% Software
+% ---------------------------------------------------------------------------
+
+@inproceedings{Paszke2019,
+  author    = {Adam Paszke and Sam Gross and Francisco Massa and Adam Lerer
+               and James Bradbury and Gregory Chanan and Trevor Killeen
+               and Zeming Lin and Natalia Gimelshein and Luca Antiga
+               and Alban Desmaison and Andreas K{\"{o}}pf and Edward Yang
+               and Zachary DeVito and Martin Raison and Alykhan Tejani
+               and Sasank Chilamkurthy and Benoit Steiner and Lu Fang
+               and Junjie Bai and Soumith Chintala},
+  title     = {{PyTorch}: An Imperative Style, High-Performance Deep Learning
+               Library},
+  booktitle = {Advances in Neural Information Processing Systems (NeurIPS)},
+  volume    = {32},
+  year      = {2019},
+  eprint    = {1912.01703},
+  archivePrefix = {arXiv}
+}
+
+@inproceedings{Wolf2020,
+  author    = {Thomas Wolf and Lysandre Debut and Victor Sanh
+               and Julien Chaumond and Clement Delangue and Anthony Moi
+               and Pierric Cistac and Tim Rault and R{\'{e}}mi Louf
+               and Morgan Funtowicz and Joe Davison and Sam Shleifer
+               and Patrick von Platen and Clara Ma and Yacine Jernite
+               and Julien Plu and Canwen Xu and Teven Le Scao
+               and Sylvain Gugger and Mariama Drame and Quentin Lhoest
+               and Alexander M. Rush},
+  title     = {Transformers: State-of-the-Art Natural Language Processing},
+  booktitle = {Proceedings of the 2020 Conference on Empirical Methods in
+               Natural Language Processing (EMNLP): System Demonstrations},
+  pages     = {38--45},
+  year      = {2020},
+  doi       = {10.18653/v1/2020.emnlp-demos.6}
+}

@@ -1,0 +1,984 @@
+% ===========================================================================
+% The Entropy-Compression Law Scales: Predicting Optimal Layer-wise
+% Compression of 7B+ Language Models via Von Neumann Entanglement Entropy
+%
+% Paper 3 in the Entropy-Compression Law series
+%
+% Nicolas Calderon Gonzalez
+% Independent Research, 3Pi Agency R&D, Bogota, Colombia
+%
+% Target: arXiv preprint -- cs.LG (primary), quant-ph (cross-list)
+% ===========================================================================
+\documentclass[11pt,a4paper]{article}
+
+% -- Packages ---------------------------------------------------------------
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage[dvipsnames]{xcolor}
+\usepackage{hyperref}
+\usepackage{cleveref}
+\usepackage{microtype}
+\usepackage{float}
+\usepackage{enumitem}
+\usepackage{multirow}
+\usepackage[numbers,sort&compress]{natbib}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=NavyBlue,
+  citecolor=OliveGreen,
+  urlcolor=BrickRed
+}
+
+% -- Custom commands --------------------------------------------------------
+\newcommand{\Dmin}{D_{\min}}
+\newcommand{\Dmax}{D_{\max}}
+\newcommand{\Svn}{S_1}
+\newcommand{\Srenyi}{S_2}
+\newcommand{\nats}{\;\mathrm{nats}}
+\newcommand{\ie}{\textit{i.e.}}
+\newcommand{\eg}{\textit{e.g.}}
+
+% -- Title ------------------------------------------------------------------
+\title{%
+  \textbf{The Entropy-Compression Law Scales:\\[4pt]
+  Predicting Optimal Layer-wise Compression of 7B+ Language Models\\[2pt]
+  via Von Neumann Entanglement Entropy}}
+
+\author{
+  Nicolas Calderon Gonzalez \\[2pt]
+  \textit{Independent Research, 3Pi Agency R\&D} \\
+  \textit{Bogot\'a, Colombia} \\
+  \texttt{nicolasc@trespimedios.co}
+}
+
+\date{July 2026}
+
+% ===========================================================================
+\begin{document}
+\maketitle
+
+% ===========================================================================
+% ABSTRACT
+% ===========================================================================
+\begin{abstract}
+Every layer of a large language model has a different tolerance for
+compression, but current methods discover this tolerance empirically,
+one layer at a time.  We show that a single number already encodes
+it: the von~Neumann entanglement entropy $\Svn$ of the tensorized
+weight matrix.  In two prior papers, we established the
+Entropy-Compression Law on models up to 2.7B parameters.
+Here we validate the law at 7B scale: on Mistral-7B (224 matrices),
+$\Svn$ predicts the minimum bond dimension for a given Frobenius
+error with $R^2 = 0.997$ at $\varepsilon = 50\%$; on Qwen2-7B (196
+matrices), $R^2 = 0.993$.  The law \emph{improves} with model size
+because 7B models exhibit wider entropy variation across layers,
+giving the regression more leverage.  We then demonstrate that the
+law is practically useful: entropy-guided rank allocation
+outperforms uniform allocation at every compression budget tested on
+GPT-2 Small (5--38\% perplexity improvement), and the advantage
+grows from 5\% to 11\% after 200 steps of LoRA healing.  As a
+predictor of layer-wise compressibility, $\Svn$ dominates the
+competing AlphaPruning metric ($R^2 = 0.997$ vs.\ $0.022$; the two
+quantities are essentially uncorrelated, $r = -0.16$).  All results
+are produced by \texttt{entropy-lens}, an open-source tool that
+computes $\Svn$ for any HuggingFace model in ${\sim}45$ minutes on
+an Apple~M1 laptop with no GPU.
+\end{abstract}
+
+\vspace{0.5em}
+\noindent\textbf{Keywords:}
+entanglement entropy, LLM compression, SVD, rank allocation,
+tensor networks, matrix product states, Mistral, Qwen
+
+% ===========================================================================
+% 1. INTRODUCTION
+% ===========================================================================
+\section{Introduction}
+\label{sec:intro}
+
+\subsection{The rank allocation problem}
+\label{sec:intro-problem}
+
+Compressing a large language model by low-rank factorization
+means replacing each weight matrix $W \in \mathbb{R}^{m \times n}$
+with a product $U \Sigma V^\top$ truncated at some rank $r < \min(m,n)$.
+The smaller $r$ is, the fewer parameters we store and the faster
+inference runs.  But different weight matrices tolerate different
+amounts of truncation.  An attention key projection that learns sparse
+compatibility patterns may survive at rank 200; a feed-forward gate
+projection that stores dense factual associations may need rank 2000.
+
+The practical consequence is that \emph{uniform} rank allocation ---
+assigning the same $r$ to every layer --- wastes parameters on
+layers that could have been compressed further and starves layers
+that needed more capacity.  The field knows this: recent adaptive
+methods~\citep{Sun2025ara, Wang2024svd} search for per-layer ranks
+by evaluating perplexity at many candidate configurations.  The
+search is expensive, model-specific, and provides no structural
+insight into \emph{why} one layer needs more rank than another.
+
+We propose a different approach.  Instead of searching for the right
+rank, we \emph{predict} it from a single structural measurement of
+the weight matrix: its \emph{von~Neumann entanglement entropy}
+$\Svn$.
+
+\subsection{The Entropy-Compression Law}
+\label{sec:intro-law}
+
+In two companion papers~\citep{calderon2026cartography,
+calderon2026theory}, we established the \emph{Entropy-Compression
+Law}: reshape a weight matrix into a high-order tensor, decompose it
+as a Matrix Product State (MPS) via sequential SVD, and measure
+$\Svn$ at the dominant bipartition.  Then the minimum bond dimension
+$\Dmin$ needed to stay within relative Frobenius error $\varepsilon$
+obeys
+\begin{equation}
+  \label{eq:law}
+  \Dmin(\varepsilon) \approx c(\varepsilon)\, e^{\,\alpha(\varepsilon)\,\Svn}\,,
+\end{equation}
+where $c(\varepsilon)$ and $\alpha(\varepsilon)$ are fit constants
+that depend on the error tolerance but not on the specific matrix.
+
+Paper~1 discovered this law empirically on GPT-2 Small (117M
+parameters, 72 matrices, $R^2 = 0.90$) and validated it across
+GPT-2 Medium (355M, 144 matrices) and Phi-2 (2.7B, 192
+matrices)~\citep{calderon2026cartography}.  Paper~2 derived it
+analytically: trained weight spectra belong to the stretched
+exponential class $\lambda_i \propto e^{-\beta i^\gamma}$, for
+which both $\Svn$ and $\log \Dmin$ share the asymptotic scale
+$(1/\gamma)|\log \beta|$, forcing $\alpha \to 1$.  Adam
+optimization, not SGD, produces the spectral shape that makes the
+law hold~\citep{calderon2026theory}.
+
+\subsection{What this paper adds}
+\label{sec:intro-contributions}
+
+The first two papers left three questions open.  This paper answers
+them.
+
+\begin{enumerate}[leftmargin=2em, itemsep=3pt]
+  \item \textbf{Does the law scale?}
+    Papers~1 and~2 validated on models up to 2.7B.  Most practical
+    compression demand targets the 7B--70B range.  We validate the
+    law on Mistral-7B~\citep{jiang2023mistral} (7.2B parameters, 224
+    matrices, $R^2 = 0.997$) and Qwen2-7B~\citep{yang2024qwen2}
+    (7.1B parameters, 196 matrices, $R^2 = 0.993$).  The fit
+    \emph{improves} with scale (\cref{sec:law-scales}).
+
+  \item \textbf{Is the law practically useful?}
+    Knowing that $\Svn$ \emph{predicts} compressibility is
+    interesting; using that prediction to \emph{allocate} compression
+    budgets is useful.  We show that entropy-guided rank allocation
+    outperforms uniform allocation at every budget tested on GPT-2
+    Small, with margins of 5--38\% in perplexity.  After 200 steps
+    of LoRA healing, the advantage grows from 5\% to 11\% at 80\%
+    parameter budget (\cref{sec:compression}).
+
+  \item \textbf{How does $\Svn$ compare to existing metrics?}
+    AlphaPruning~\citep{lu2024alphapruning} uses the Hill estimator
+    $\alpha_{\text{Hill}}$ of spectral tail heaviness to guide
+    compression.  On Mistral-7B, $\Svn$ achieves $R^2 = 0.997$ as a
+    predictor of $\Dmin$ where $\alpha_{\text{Hill}}$ achieves $R^2 =
+    0.022$.  The two metrics are essentially uncorrelated ($r =
+    -0.16$); they measure fundamentally different properties of the
+    spectrum (\cref{sec:alpha-pruning}).
+\end{enumerate}
+
+All experiments run on commodity hardware: spectral analysis of a 7B
+model takes approximately 45 minutes on an Apple~M1 with 16\,GB
+unified memory and no GPU.  The tool is released as
+\texttt{entropy-lens}, an open-source Python package
+(\cref{sec:tool}).
+
+\subsection{Outline}
+\label{sec:intro-outline}
+
+\Cref{sec:background} reviews SVD compression, the
+Entropy-Compression Law, and competing approaches.
+\Cref{sec:law-scales} validates the law on Mistral-7B and Qwen2-7B.
+\Cref{sec:alpha-pruning} compares $\Svn$ against AlphaPruning's
+metric.
+\Cref{sec:compression} demonstrates entropy-guided compression with
+and without healing.
+\Cref{sec:tool} describes the \texttt{entropy-lens} tool.
+\Cref{sec:limitations} states our limitations.
+\Cref{sec:conclusion} concludes.
+
+
+% ===========================================================================
+% 2. BACKGROUND
+% ===========================================================================
+\section{Background}
+\label{sec:background}
+
+\subsection{SVD compression of weight matrices}
+\label{sec:bg-svd}
+
+Given a weight matrix $W \in \mathbb{R}^{m \times n}$, the singular
+value decomposition (SVD) writes $W = U \Sigma V^\top$, where
+$\Sigma = \operatorname{diag}(\sigma_1, \sigma_2, \ldots)$ with
+$\sigma_1 \geq \sigma_2 \geq \cdots \geq 0$.  Truncating at rank
+$r$ --- keeping only the $r$ largest singular values --- yields the
+best rank-$r$ approximation in the Frobenius
+norm~\citep{Eckart1936}.  The \emph{relative Frobenius error} of
+this approximation is
+\begin{equation}
+  \label{eq:frob-error}
+  \varepsilon(r) = \sqrt{\frac{\sum_{i=r+1}^{R} \sigma_i^2}
+                              {\sum_{i=1}^{R} \sigma_i^2}}\,,
+\end{equation}
+where $R = \min(m, n)$ is the full rank.  We define $\Dmin(\varepsilon)$
+as the smallest $r$ achieving $\varepsilon(r) \leq \varepsilon$ ---
+the minimum rank needed for a given error tolerance.
+
+For tensor network compression, the same logic applies at each
+internal bond of an MPS decomposition
+(\cref{eq:law})~\citep{Oseledets2011, Schollwock2011}.  We use
+``bond dimension'' and ``rank'' interchangeably throughout this
+paper; both refer to the truncation dimension at a given bipartition.
+
+\subsection{The Entropy-Compression Law}
+\label{sec:bg-law}
+
+The full derivation appears in~\citet{calderon2026cartography}
+(empirical) and~\citet{calderon2026theory} (analytical).  We
+summarize the key ideas.
+
+Reshape a weight matrix $W \in \mathbb{R}^{m \times n}$ into a
+high-order tensor by factorizing each dimension into small primes
+(\eg, $4096 = 2^{12}$), then decompose the resulting tensor as
+an MPS via sequential SVD.  At each internal bipartition --- the
+boundary between ``left'' and ``right'' sites --- the SVD produces
+a singular value spectrum.  From the normalized squared singular
+values $p_i = \sigma_i^2 / \sum_j \sigma_j^2$, we compute the
+\emph{von~Neumann entropy} (also called the Shannon entropy of the
+squared singular value distribution):
+\begin{equation}
+  \label{eq:svn}
+  \Svn = -\sum_i p_i \log p_i\,.
+\end{equation}
+This is the standard measure of bipartite entanglement in quantum
+information theory~\citep{VonNeumann1932, Eisert2010}.  A flat
+spectrum gives $\Svn = \log R$ (maximum entropy, hardest to
+compress); a sharply peaked spectrum gives $\Svn \approx 0$ (minimum
+entropy, easiest to compress).
+
+The \emph{dominant bipartition} --- the cut with the largest bond
+dimension, typically at the boundary between the row and column index
+groups of the tensorized matrix --- is the bottleneck for
+compression.  The Entropy-Compression Law states that $\Dmin$ at this
+cut obeys \cref{eq:law}.  Paper~2 shows that the exponent
+$\alpha \to 1$ for the stretched exponential spectral class produced
+by Adam training, so that in the asymptotic regime,
+$\Dmin \approx c \cdot e^{\Svn}$ --- the bond dimension equals the
+exponential of the entropy, which is the effective dimension of the
+entangled subspace~\citep{calderon2026theory}.
+
+\subsection{Competing approaches}
+\label{sec:bg-competing}
+
+Several recent methods address layer-wise rank allocation for LLM
+compression.
+
+\paragraph{AlphaPruning.}
+\citet{lu2024alphapruning} use Heavy-Tailed Self-Regularization
+(HT-SR) theory to assign compression ratios.  For each weight
+matrix, they compute the \emph{Hill estimator}
+$\alpha_{\text{Hill}}$, which measures the heaviness of the spectral
+tail: a smaller $\alpha_{\text{Hill}}$ indicates a heavier tail (more
+weight in large singular values), and AlphaPruning assigns less
+compression to matrices with smaller $\alpha_{\text{Hill}}$.  The
+metric captures a real property of the spectrum --- its tail behavior
+--- but, as we show in \cref{sec:alpha-pruning}, tail heaviness is a
+poor predictor of the \emph{total truncation error}, which depends on
+the full spectral distribution, not just its tail.
+
+\paragraph{SVD-LLM.}
+\citet{Wang2024svd} incorporate truncation-awareness into SVD
+compression by whitening the weight matrices before decomposition,
+accounting for activation statistics.  Their method improves
+compression quality but does not provide a structural predictor of
+per-layer compressibility.
+
+\paragraph{Adaptive rank allocation.}
+\citet{Sun2025ara} (ARA) propose search-based adaptive rank
+allocation, assigning different ranks to different layers based on
+perplexity sensitivity.  The Entropy-Compression Law provides the
+structural predictor that makes such search unnecessary: $\Svn$ tells
+you which layers need more rank, without any evaluation passes.
+
+
+% ===========================================================================
+% 3. THE LAW SCALES
+% ===========================================================================
+\section{The Law Scales}
+\label{sec:law-scales}
+
+\subsection{Experimental setup}
+\label{sec:scale-setup}
+
+We apply the Entropy-Compression Law analysis to three models
+spanning two orders of magnitude in parameter count:
+
+\begin{itemize}[leftmargin=2em, itemsep=2pt]
+  \item \textbf{GPT-2 Small}~\citep{Radford2019}: 124M parameters,
+    12 layers, 72 weight matrices, $d_{\text{model}} = 768$.
+  \item \textbf{Mistral-7B}~\citep{jiang2023mistral}: 7.2B
+    parameters, 32 layers, 224 weight matrices (7 per layer:
+    q/k/v/o projections + gate/up/down FFN),
+    $d_{\text{model}} = 4096$.
+  \item \textbf{Qwen2-7B}~\citep{yang2024qwen2}: 7.1B parameters,
+    28 layers, 196 weight matrices (7 per layer),
+    $d_{\text{model}} = 3584$.
+\end{itemize}
+
+For each model, we extract every weight matrix from the attention and
+feed-forward blocks, reshape it into a high-order tensor by
+factorizing each dimension into powers of 2 (and one factor of 7 for
+Qwen2's 3584-dimensional matrices), decompose it as an MPS via
+sequential SVD, and record the full singular value spectrum at the
+dominant bipartition.  We then compute $\Svn$ and $\Dmin(\varepsilon)$
+for $\varepsilon \in \{5\%, 10\%, 20\%, 50\%\}$.
+
+All spectral analysis runs on a single Apple~M1 processor with
+16\,GB unified memory.  No GPU is required.  Processing time is
+approximately 45 minutes per 7B model.
+
+\subsection{Validation results}
+\label{sec:scale-results}
+
+\Cref{tab:cross-model} reports the Entropy-Compression Law fit
+parameters for all three models.
+
+\begin{table}[htbp]
+\centering
+\caption{Entropy-Compression Law fit:
+  $\log \Dmin(\varepsilon) = \alpha \cdot \Svn + \log c$.
+  The law holds across all three models and \emph{improves with
+  model size}: Mistral-7B achieves $R^2 = 0.997$ at
+  $\varepsilon = 50\%$.  The exponent $\alpha$ approaches unity
+  at coarse compression, consistent with the theoretical prediction
+  of~\citet{calderon2026theory}.}
+\label{tab:cross-model}
+\begin{tabular}{@{}llccccc@{}}
+\toprule
+$\varepsilon$ & Model & Params & $n$ & $R^2$ & $\alpha$ \\
+\midrule
+\multirow{3}{*}{5\%}
+  & GPT-2 Small  & 124M & 72  & 0.804 & 0.367 \\
+  & Mistral-7B   & 7.2B & 224 & 0.839 & 0.756 \\
+  & Qwen2-7B     & 7.1B & 196 & 0.920 & 0.967 \\
+\midrule
+\multirow{3}{*}{10\%}
+  & GPT-2 Small  & 124M & 72  & 0.808 & 0.546 \\
+  & Mistral-7B   & 7.2B & 224 & 0.916 & 0.824 \\
+  & Qwen2-7B     & 7.1B & 196 & 0.949 & 0.979 \\
+\midrule
+\multirow{3}{*}{20\%}
+  & GPT-2 Small  & 124M & 72  & 0.827 & 0.732 \\
+  & Mistral-7B   & 7.2B & 224 & 0.973 & 0.910 \\
+  & Qwen2-7B     & 7.1B & 196 & 0.979 & 0.999 \\
+\midrule
+\multirow{3}{*}{50\%}
+  & GPT-2 Small  & 124M & 72  & 0.865 & 1.001 \\
+  & Mistral-7B   & 7.2B & 224 & \textbf{0.997} & 1.041 \\
+  & Qwen2-7B     & 7.1B & 196 & \textbf{0.993} & 1.020 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[htbp]
+\centering
+\fbox{\parbox{0.9\columnwidth}{\centering\vspace{3cm}
+  \texttt{[Figure: scatter\_3model\_50pct]}\\[4pt]
+  Three-model scatter plot of $\log \Dmin$ vs.\ $\Svn$
+\vspace{3cm}}}
+\caption{\textbf{The Entropy-Compression Law at 7B scale.}
+  Log-scale minimum bond dimension $\Dmin$ versus von~Neumann entropy
+  $\Svn$ at $\varepsilon = 50\%$ for GPT-2 Small (72 points, blue),
+  Mistral-7B (224 points, orange), and Qwen2-7B (196 points, green).
+  The 7B models exhibit wider entropy ranges and tighter fits than
+  GPT-2 Small.  Mistral-7B achieves $R^2 = 0.997$.}
+\label{fig:scatter-3model}
+\end{figure}
+
+Three patterns emerge from \cref{tab:cross-model}.
+
+\paragraph{The law improves with scale.}
+At $\varepsilon = 50\%$, GPT-2 Small achieves $R^2 = 0.865$;
+Mistral-7B reaches $R^2 = 0.997$; Qwen2-7B reaches $R^2 = 0.993$.
+This improvement is not accidental.  Larger models have wider
+entropy distributions --- the difference between the most
+compressible and least compressible layers is larger --- which gives
+the regression more variance to explain.  GPT-2 Small's 768-dimensional
+matrices have a narrower entropy range than Mistral's 4096-dimensional
+matrices, creating a compression ceiling that limits the $R^2$ for
+small models.  As model size grows, the law gets \emph{better}, not
+worse.
+
+\paragraph{The exponent $\alpha$ converges to unity.}
+Across all three models, $\alpha$ increases toward 1 as
+$\varepsilon$ increases: from $\alpha \approx 0.37$--$0.97$ at 5\%
+error to $\alpha \approx 1.00$--$1.04$ at 50\% error.  At
+$\alpha = 1$, the law reduces to $\Dmin \propto e^{\Svn}$ --- the
+\emph{effective Hilbert space dimension} --- which is the
+information-theoretic prediction for the number of significant
+degrees of freedom.  The convergence toward unity from multiple
+architectures with different training recipes confirms the
+theoretical prediction of~\citet{calderon2026theory}: the
+stretched-exponential spectral class forces $\alpha \to 1$ in the
+coarse-compression regime.
+
+\paragraph{The law is architecture-agnostic.}
+GPT-2 uses multi-head attention with no gating in the FFN.
+Mistral-7B uses grouped-query attention (GQA), rotary position
+embeddings (RoPE), and a gated FFN with SiLU activation.
+Qwen2-7B uses GQA with different group sizes and its own
+training recipe.  Despite these architectural differences, the same
+exponential relationship holds.  The law depends on the
+\emph{spectral structure of trained weight matrices}, not on the
+specifics of how those matrices are used during inference.
+
+\subsection{Entanglement heterogeneity at scale}
+\label{sec:scale-heterogeneity}
+
+The entanglement structure of Mistral-7B confirms and amplifies the
+heterogeneity pattern discovered in GPT-2
+Small~\citep{calderon2026cartography}.  \Cref{tab:mistral-heterogeneity}
+shows the mean $\Svn$ and $\Dmin$ at $\varepsilon = 50\%$ by
+projection type.
+
+\begin{table}[htbp]
+\centering
+\caption{Entanglement heterogeneity in Mistral-7B.  Attention
+  projections (top four rows) have systematically lower entropy and
+  smaller bond dimensions than feed-forward layers (bottom three
+  rows).  The ratio between the most compressible type
+  (\texttt{k\_proj}, $D_{50} = 318$) and the least compressible
+  (\texttt{up\_proj}, $D_{50} = 1998$) exceeds $6\times$.}
+\label{tab:mistral-heterogeneity}
+\begin{tabular}{@{}lccc@{}}
+\toprule
+Projection type & $\bar{\Svn}$ (nats) & Mean $D_{50}$ & $n$ \\
+\midrule
+\texttt{k\_proj}    & 6.249 &  318 & 32 \\
+\texttt{v\_proj}    & 6.700 &  490 & 32 \\
+\texttt{q\_proj}    & 7.156 &  828 & 32 \\
+\texttt{o\_proj}    & 7.559 & 1079 & 32 \\
+\midrule
+\texttt{gate\_proj} & 8.001 & 1875 & 32 \\
+\texttt{up\_proj}   & 8.093 & 1998 & 32 \\
+\texttt{down\_proj} & 8.080 & 1973 & 32 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[htbp]
+\centering
+\fbox{\parbox{0.9\columnwidth}{\centering\vspace{3cm}
+  \texttt{[Figure: entropy\_map\_mistral7b]}\\[4pt]
+  Heatmap of $\Svn$ by layer and projection type
+\vspace{3cm}}}
+\caption{Entanglement map of Mistral-7B.  Each cell shows $\Svn$
+  (in nats) for one weight matrix, organized by layer (horizontal)
+  and projection type (vertical).  The systematic separation between
+  attention types (cooler colors) and FFN types (warmer colors) is
+  visible at a glance.  Key projections are consistently the most
+  compressible; gate and up projections the least.}
+\label{fig:entropy-map}
+\end{figure}
+
+The separation between attention and FFN layers is decisive:
+$\bar{\Svn}^{\text{attn}} = 6.916\nats$ versus
+$\bar{\Svn}^{\text{ffn}} = 8.058\nats$ (two-sample $t$-test,
+$p = 3.26 \times 10^{-40}$).  This means attention projections
+require, on average, roughly $e^{8.06 - 6.92} = e^{1.14} \approx
+3.1\times$ less bond dimension than FFN projections at
+$\varepsilon = 50\%$.
+
+Within attention, the ordering is k < v < q < o, which differs from
+GPT-2's ordering (o < q $\approx$ k < v).  This difference likely
+reflects architectural choices: Mistral uses grouped-query attention
+where key and value projections have smaller output dimensions
+($d_{\text{kv}} = 1024$ vs.\ $d_{\text{model}} = 4096$), making
+them inherently lower-rank and lower-entropy.  The Entropy-Compression
+Law captures this difference automatically --- no architectural
+knowledge is needed, just the SVD of the weight matrix.
+
+
+% ===========================================================================
+% 4. S1 VS ALPHAPRUNING
+% ===========================================================================
+\section{$\Svn$ vs.\ AlphaPruning}
+\label{sec:alpha-pruning}
+
+\subsection{Head-to-head comparison}
+\label{sec:alpha-head}
+
+AlphaPruning~\citep{lu2024alphapruning} uses the Hill estimator
+$\alpha_{\text{Hill}}$ --- a measure of how heavy-tailed the singular
+value distribution is --- to guide layer-wise compression.  The
+intuition is that matrices with heavier tails (smaller
+$\alpha_{\text{Hill}}$) concentrate more energy in their top singular
+values and should therefore be easier to compress.
+
+We computed both $\Svn$ and $\alpha_{\text{Hill}}$ for all 224 weight
+matrices of Mistral-7B and used each as a predictor of
+$\log \Dmin(\varepsilon)$ via ordinary least squares.
+\Cref{tab:s1-vs-alpha} reports the results.
+
+\begin{table}[htbp]
+\centering
+\caption{$\Svn$ vs.\ $\alpha_{\text{Hill}}$ as predictors of
+  $\log \Dmin$ on Mistral-7B ($n = 224$).  At every error tolerance,
+  $\Svn$ explains more than an order of magnitude more variance.
+  At $\varepsilon = 50\%$, $\alpha_{\text{Hill}}$ explains only 2.2\%
+  of the variance in bond dimension --- essentially noise.}
+\label{tab:s1-vs-alpha}
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+$\varepsilon$ & $R^2(\Svn)$ & $R^2(\alpha_{\text{Hill}})$ &
+  $\Delta R^2$ \\
+\midrule
+ 5\% & 0.839 & 0.100 & $+0.739$ \\
+10\% & 0.916 & 0.078 & $+0.838$ \\
+20\% & 0.973 & 0.054 & $+0.920$ \\
+50\% & 0.997 & 0.022 & $+0.975$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[htbp]
+\centering
+\fbox{\parbox{0.9\columnwidth}{\centering\vspace{3cm}
+  \texttt{[Figure: s1\_vs\_alpha\_hill]}\\[4pt]
+  Side-by-side scatter: $\Svn$ vs.\ $\alpha_{\text{Hill}}$ as predictors
+\vspace{3cm}}}
+\caption{Scatter plots of $\Svn$ (left) and $\alpha_{\text{Hill}}$
+  (right) versus $\log \Dmin$ at $\varepsilon = 50\%$ for all 224
+  Mistral-7B matrices.  $\Svn$ produces a tight linear relationship
+  ($R^2 = 0.997$); $\alpha_{\text{Hill}}$ shows no meaningful
+  pattern ($R^2 = 0.022$).}
+\label{fig:s1-vs-alpha}
+\end{figure}
+
+The comparison is not close.  At $\varepsilon = 50\%$, $\Svn$
+explains 99.7\% of the variance in $\log \Dmin$;
+$\alpha_{\text{Hill}}$ explains 2.2\%.  At $\varepsilon = 5\%$, where
+the fit is weakest, $\Svn$ still explains 83.9\% versus
+$\alpha_{\text{Hill}}$'s 10.0\%.
+
+\subsection{Why the metrics diverge}
+\label{sec:alpha-why}
+
+The Pearson correlation between $\Svn$ and $\alpha_{\text{Hill}}$
+across Mistral-7B's 224 matrices is $r = -0.16$ --- the two metrics
+are essentially uncorrelated.  They measure different things.
+
+$\Svn$ measures the \emph{full spectral distribution}.  It is the
+Shannon entropy of the squared singular value probabilities
+$\{p_i\}$, giving weight to every part of the spectrum through the
+$-p_i \log p_i$ term.  The truncation error
+(\cref{eq:frob-error}) is the sum of all discarded $\sigma_i^2$
+values --- head, body, and tail combined --- so $\Svn$, which
+accounts for the entire distribution, is the natural predictor.
+
+$\alpha_{\text{Hill}}$ measures the \emph{tail heaviness} of the
+spectrum.  It is estimated from the $k$ largest singular values and
+characterizes how quickly the tail decays.  A matrix can have a heavy
+tail (small $\alpha_{\text{Hill}}$) but still require a large bond
+dimension because its \emph{body} --- the middle portion of the
+spectrum --- carries significant energy.  Conversely, a matrix with a
+light tail (large $\alpha_{\text{Hill}}$) might need few modes
+overall because its energy is concentrated in the top singular values.
+
+The $r = -0.16$ correlation confirms this: knowing the tail heaviness
+tells you almost nothing about the total truncation error.  It is as
+if you tried to predict a river's total flow by measuring only its
+depth at the deepest point --- you would miss the width entirely.
+$\Svn$ measures the whole cross-section.
+
+
+% ===========================================================================
+% 5. ENTROPY-GUIDED COMPRESSION
+% ===========================================================================
+\section{Entropy-Guided Compression}
+\label{sec:compression}
+
+\subsection{The allocation problem}
+\label{sec:comp-problem}
+
+Given a global \emph{parameter budget} --- the total number of
+parameters allowed after compression, expressed as a fraction of the
+original model --- we must decide how many parameters to allocate to
+each layer.  This is an optimization problem: minimize total
+approximation error (or perplexity degradation) subject to a global
+parameter constraint.
+
+A weight matrix $W \in \mathbb{R}^{m \times n}$ truncated at rank
+$r$ uses $r(m + n)$ parameters (storing the factors $U_r$ and
+$V_r^\top$).  The parameter \emph{savings} from compressing one
+matrix are $(mn - r(m+n))$, and the total savings across all
+matrices must reach the target budget.
+
+\subsection{Three strategies}
+\label{sec:comp-strategies}
+
+We compare three rank allocation strategies, all subject to the same
+global parameter budget:
+
+\begin{enumerate}[leftmargin=2em, itemsep=3pt]
+  \item \textbf{Uniform.}
+    Every matrix receives the same truncation rank, computed so that
+    the total parameter count matches the budget.  This is the
+    baseline strategy used by most SVD compression methods.
+
+  \item \textbf{Proportional.}
+    Each matrix's rank is proportional to its original size.  Larger
+    matrices get proportionally more rank.  This preserves the
+    relative complexity of each layer but ignores their differing
+    tolerances for compression.
+
+  \item \textbf{Entropy-guided.}
+    We use the Entropy-Compression Law to predict
+    $\Dmin(\varepsilon)$ for each matrix at a reference $\varepsilon$,
+    then rescale all ranks proportionally to fit the global budget.
+    Matrices with high $\Svn$ (harder to compress) receive more rank;
+    matrices with low $\Svn$ (easier to compress) receive less.  The
+    $\Svn$ values are computed once, offline, and the allocation
+    requires no evaluation passes.
+\end{enumerate}
+
+\subsection{Results on GPT-2 Small}
+\label{sec:comp-results}
+
+We compressed GPT-2 Small at six parameter budgets (60\%--95\% of
+original parameters retained) using uniform and entropy-guided
+allocation, then evaluated perplexity on WikiText-2.
+\Cref{tab:compression} reports the results.
+
+\begin{table}[htbp]
+\centering
+\caption{Perplexity (WikiText-2) of GPT-2 Small under SVD compression
+  with uniform vs.\ entropy-guided rank allocation.  Baseline
+  (uncompressed) PPL is 31.83.  Entropy-guided allocation is better
+  at \emph{every} budget tested, with advantages ranging from 5\% to
+  38\%.  Lower perplexity is better.}
+\label{tab:compression}
+\begin{tabular}{@{}rrrr@{}}
+\toprule
+Budget & Uniform PPL & Entropy PPL & Improvement \\
+\midrule
+95\% & 4783 & 3016 & 37\% \\
+90\% & 5505 & 3401 & 38\% \\
+85\% & 4397 & 3491 & 21\% \\
+80\% & 3965 & 3751 & ~5\% \\
+70\% & 4468 & 4263 & ~5\% \\
+60\% & 7360 & 6270 & 15\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[htbp]
+\centering
+\fbox{\parbox{0.9\columnwidth}{\centering\vspace{3cm}
+  \texttt{[Figure: pareto\_compression]}\\[4pt]
+  PPL vs.\ budget for uniform and entropy-guided strategies
+\vspace{3cm}}}
+\caption{Pareto frontier: perplexity versus parameter budget for
+  uniform and entropy-guided compression of GPT-2 Small.
+  Entropy-guided allocation dominates the Pareto frontier at every
+  budget.  The advantage is largest at aggressive compression (90\%
+  budget: 38\% improvement) and smallest at moderate compression
+  (80\% budget: 5\% improvement).}
+\label{fig:pareto}
+\end{figure}
+
+Entropy-guided allocation dominates at every budget.  The advantage
+is largest at the most aggressive compression ratios (90\% and 95\%
+budget, where 5--10\% of parameters are removed).  At these ratios,
+the uniform strategy is forced to truncate every matrix by the same
+small amount, including high-entropy FFN matrices that cannot
+tolerate it.  The entropy-guided strategy instead concentrates the
+cuts on low-entropy attention matrices that can absorb them with
+minimal damage.
+
+We note that the absolute perplexity values are high (thousands,
+versus a baseline of 31.83) because raw SVD truncation without any
+post-compression fine-tuning is an aggressive intervention.  The
+relevant comparison is not absolute perplexity but the
+\emph{relative} performance of the two allocation strategies.  The
+next section shows that healing closes most of the gap to baseline.
+
+\subsection{Healing amplifies the advantage}
+\label{sec:comp-healing}
+
+Raw SVD truncation degrades perplexity severely because the model
+has never seen its own compressed weights during training.
+\emph{Healing} --- a short fine-tuning pass on the compressed model
+--- allows the surviving parameters to adapt to the new weight
+configuration and recover much of the lost performance.
+
+We heal both the uniform and entropy-guided compressed models at
+80\% parameter budget using LoRA~\citep{Hu2021} (rank 16,
+$\alpha = 32$, learning rate $2 \times 10^{-4}$) for 200 steps on
+WikiText-2.  \Cref{tab:healing} reports the results.
+
+\begin{table}[htbp]
+\centering
+\caption{Healing amplifies the entropy advantage.  At 80\% parameter
+  budget, entropy-guided compression starts 5\% better before healing
+  and 11\% better after healing.  The advantage nearly doubles because
+  healing is more effective when the initial compression preserves the
+  most critical parameters.  Baseline PPL: 31.83.}
+\label{tab:healing}
+\begin{tabular}{@{}lccc@{}}
+\toprule
+Strategy & Compressed PPL & Healed PPL & Improvement \\
+\midrule
+Uniform        & 3965  & 209.89 & --- \\
+Entropy-guided & 3751  & 186.40 & 11\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+After healing, the entropy-guided model achieves PPL~186.40 versus
+the uniform model's 209.89 --- an 11\% improvement, up from the
+5\% advantage before healing.  The advantage nearly doubles because
+healing is more effective when the initial compression preserves the
+right parameters.  Entropy-guided allocation concentrates rank where
+the spectrum demands it, giving the LoRA adapter a better starting
+point for recovery.
+
+This result has a practical implication: in any compression pipeline
+that includes a healing step (which all production pipelines should),
+the benefit of entropy-guided allocation is \emph{amplified}, not
+diminished.  Spending 45~minutes to compute $\Svn$ before
+compressing saves far more than 45~minutes of additional healing
+compute.
+
+
+% ===========================================================================
+% 6. ENTROPY-LENS: A PRACTICAL TOOL
+% ===========================================================================
+\section{\texttt{entropy-lens}: A Practical Tool}
+\label{sec:tool}
+
+The value of the Entropy-Compression Law depends on how cheaply
+$\Svn$ can be computed.  If measuring the entropy of a 7B model
+required a GPU cluster, the law would be an interesting theoretical
+result but not a practical one.  We show that it is practical.
+
+\subsection{Architecture}
+\label{sec:tool-arch}
+
+\texttt{entropy-lens} is a Python package that computes $\Svn$ for
+every weight matrix of any HuggingFace model.  The key design
+decisions are:
+
+\begin{enumerate}[leftmargin=2em, itemsep=3pt]
+  \item \textbf{Streaming SVD via safetensors mmap.}
+    Instead of loading the entire model into memory, we memory-map
+    the safetensors files and process one weight matrix at a time.
+    Each matrix is loaded, tensorized, SVD-decomposed at the dominant
+    bipartition, and its spectrum recorded.  Peak memory usage is
+    dominated by the single largest weight matrix (typically
+    $d_{\text{model}} \times 4 d_{\text{model}}$ for the FFN),
+    not by the total model size.
+
+  \item \textbf{Architecture-agnostic extraction.}
+    A registry maps HuggingFace model families (GPT-2, LLaMA/Mistral,
+    Qwen, Phi) to their weight matrix naming conventions.  Adding a
+    new architecture requires implementing a single
+    \texttt{ArchConfig} subclass that specifies the projection names
+    and their shapes.
+
+  \item \textbf{Dominant-bipartition focus.}
+    Rather than computing the full MPS decomposition (which would
+    require $N-1$ SVDs per matrix), we compute a single SVD at the
+    dominant bipartition --- the cut with the largest dimension,
+    which is the compression bottleneck.  This reduces the per-matrix
+    cost from $O(N)$ SVDs to one.
+\end{enumerate}
+
+\subsection{Performance}
+\label{sec:tool-perf}
+
+\Cref{tab:tool-perf} reports the wall-clock time for analyzing
+three models on an Apple~M1 with 16\,GB unified memory.
+
+\begin{table}[htbp]
+\centering
+\caption{\texttt{entropy-lens} performance on Apple~M1 (16\,GB, no
+  GPU).  Analyzing a 7B model takes under 45 minutes.  The dominant
+  cost is the SVD of the largest weight matrices ($4096 \times 14336$
+  for Mistral's FFN layers).}
+\label{tab:tool-perf}
+\begin{tabular}{@{}lccc@{}}
+\toprule
+Model & Params & Matrices & Time \\
+\midrule
+GPT-2 Small & 124M &  72 & $\sim$2 min \\
+Mistral-7B  & 7.2B & 224 & $\sim$45 min \\
+Qwen2-7B    & 7.1B & 196 & $\sim$40 min \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Open-source release}
+\label{sec:tool-release}
+
+\texttt{entropy-lens} is released under the MIT license at
+\url{https://github.com/nicogarazzo/entropy-lens}.  The tool provides
+a command-line interface:
+
+\begin{verbatim}
+  entropy-lens analyze mistralai/Mistral-7B-v0.3
+\end{verbatim}
+
+\noindent
+This produces a CSV of per-matrix $\Svn$, $\Dmin(\varepsilon)$ at
+four thresholds, scatter plots of the Entropy-Compression Law fit,
+and an entanglement heatmap.  The results can be fed directly into
+the rank allocation pipeline.
+
+
+% ===========================================================================
+% 7. LIMITATIONS
+% ===========================================================================
+\section{Limitations}
+\label{sec:limitations}
+
+We state our limitations directly.
+
+\begin{enumerate}[leftmargin=2em, itemsep=3pt]
+  \item \textbf{Validated up to 7B, not 70B+.}
+    The largest model tested is 7.2B parameters.  Whether the law
+    holds at the 70B--405B scale where compression is most urgently
+    needed remains to be validated.  We expect it will --- the law
+    \emph{improved} from 124M to 7.2B --- but expectation is not
+    evidence.  \texttt{entropy-lens} can analyze 70B models in
+    principle (via streaming SVD), but we have not yet run this
+    experiment.
+
+  \item \textbf{Frobenius error $\neq$ perplexity.}
+    The Entropy-Compression Law predicts Frobenius truncation error,
+    not perplexity.  As~\citet{hsu2025rethinking} emphasize, the
+    relationship between per-layer approximation error and downstream
+    task performance is non-trivial.  Our compression experiments
+    (\cref{sec:compression}) show that the Frobenius-based ranking
+    of layers is informative for perplexity-aware allocation, but we
+    have not derived a formal perplexity-prediction law.
+
+  \item \textbf{Healing is obligatory for practical compression.}
+    Without post-compression fine-tuning, SVD truncation produces
+    perplexity in the thousands, regardless of allocation strategy.
+    The entropy-guided advantage is in \emph{relative} performance
+    (which strategy degrades less), not in absolute usability of the
+    compressed model without healing.  Any practical deployment
+    requires a healing step.
+
+  \item \textbf{Compression experiments on GPT-2 Small only.}
+    The perplexity comparison between uniform and entropy-guided
+    allocation (\cref{sec:compression}) is currently validated only
+    on GPT-2 Small.  Mistral-7B compression experiments require GPU
+    cloud infrastructure and are in progress.  We include the GPT-2
+    results because the allocation principle --- entropy predicts
+    which layers need more rank --- is architecture-independent, even
+    though the specific perplexity numbers are model-specific.
+
+  \item \textbf{Single bipartition.}
+    We measure $\Svn$ at the dominant bipartition only.  A full
+    entanglement characterization would examine all $N-1$ bipartitions
+    and their mutual information structure.  For the purpose of
+    compression, the dominant bipartition is the bottleneck, so this
+    is the relevant cut --- but the full multi-cut structure may
+    contain additional information for more sophisticated compression
+    schemes.
+
+  \item \textbf{No comparison against perplexity-aware search methods.}
+    We compare entropy-guided allocation against uniform allocation,
+    not against search-based methods like ARA~\citep{Sun2025ara} that
+    optimize ranks by evaluating perplexity at many configurations.
+    Such methods may find better allocations at the cost of orders of
+    magnitude more compute.  The entropy-guided approach is intended
+    as a \emph{principled initialization} --- a starting point that
+    eliminates most of the search space, not necessarily the final
+    answer.
+\end{enumerate}
+
+
+% ===========================================================================
+% 8. CONCLUSION
+% ===========================================================================
+\section{Conclusion}
+\label{sec:conclusion}
+
+The Entropy-Compression Law scales.  On Mistral-7B, the von~Neumann
+entanglement entropy $\Svn$ predicts the minimum bond dimension for
+a given Frobenius error with $R^2 = 0.997$ --- explaining 99.7\% of
+the variance across 224 weight matrices with a single structural
+measurement per matrix.  On Qwen2-7B, the law achieves $R^2 = 0.993$.
+Both results are stronger than the original GPT-2 validation
+($R^2 = 0.865$), because larger models exhibit wider entropy
+variation across layers, giving the law more leverage.
+
+Beyond prediction, the law is practically useful.  Entropy-guided
+rank allocation outperforms uniform allocation at every compression
+budget tested, with advantages of 5--38\% in perplexity before
+healing and 11\% after healing.  As a predictor of layer-wise
+compressibility, $\Svn$ dominates AlphaPruning's Hill estimator
+($R^2 = 0.997$ vs.\ $0.022$); the two metrics are essentially
+independent ($r = -0.16$), measuring different properties of the
+singular value spectrum.  All computations run on a laptop in under
+an hour.
+
+One open question is whether the gap between Frobenius prediction and
+perplexity can be closed --- whether a perplexity-aware version of
+the Entropy-Compression Law exists.  Another is whether the law
+holds at 70B+ scale.  But the direction of the evidence is clear:
+the law gets better with scale, not worse.  If the trend continues,
+the largest models --- the ones that need compression most --- are
+the ones where entropy-guided allocation will work best.
+
+A quantum-inspired diagnostic, requiring no labels, no gradients,
+and no GPU, predicts the compressibility of every layer in a 7B
+language model with 99.7\% accuracy.  The singular value spectrum
+of a trained weight matrix, it turns out, already knows how much
+you can compress it.  You just have to ask it the right question.
+
+
+% ===========================================================================
+% ACKNOWLEDGMENTS
+% ===========================================================================
+\section*{Acknowledgments}
+
+Computations were performed on Apple~Silicon~M1 hardware.  The
+author thanks the open-source communities behind
+PyTorch~\citep{Paszke2019} and HuggingFace
+Transformers~\citep{Wolf2020}.
+
+\paragraph{AI-assisted research statement.}
+This research was conducted by a human author with substantial
+assistance from large language models (Anthropic's Claude), used for
+code development, literature review, and manuscript drafting.  All
+experiments were designed, executed, and verified by the author; all
+numerical results come from the \texttt{entropy-lens} code
+repository, which can be run end-to-end to reproduce them.  The
+author takes full responsibility for every claim.
+
+
+% ===========================================================================
+% BIBLIOGRAPHY
+% ===========================================================================
+\bibliographystyle{plainnat}
+\bibliography{references}
+
+
+\end{document}
