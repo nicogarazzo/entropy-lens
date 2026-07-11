@@ -1,6 +1,7 @@
 """CLI entry point for entropy-lens."""
 
 import csv
+import json
 import sys
 from pathlib import Path
 
@@ -8,6 +9,7 @@ import click
 import numpy as np
 from tqdm import tqdm
 
+from .allocator import allocate_ranks
 from .extract import extract_svdvals_streaming
 from .law import FitResult, evaluate_go_nogo, fit_entropy_law
 from .report import save_report
@@ -125,6 +127,53 @@ def analyze(model_path: str, output: str, epsilons: str, dtype: str):
     # Save JSON report
     report_path = save_report(model_path, records, fit_results, verdict, str(out_dir))
     click.echo(f"Report saved: {report_path}")
+
+
+@main.command()
+@click.argument("csv_path")
+@click.option("--budget", "-b", required=True, type=float, help="Parameter budget ratio (0-1].")
+@click.option(
+    "--strategy",
+    "-s",
+    type=click.Choice(["uniform", "proportional", "entropy"]),
+    default="entropy",
+    help="Allocation strategy.",
+)
+@click.option("--config", "-c", default=None, help="HuggingFace config.json for shape inference.")
+@click.option("--output", "-o", default=None, help="Output JSON file (default: stdout).")
+def allocate(csv_path: str, budget: float, strategy: str, config: str, output: str):
+    """Allocate SVD truncation ranks under a parameter budget.
+
+    Reads an entropy-lens results CSV and assigns a rank D_i to each layer,
+    optimized according to the chosen strategy.
+    """
+    try:
+        result = allocate_ranks(
+            csv_path=csv_path,
+            budget_ratio=budget,
+            strategy=strategy,
+            config_path=config,
+        )
+    except (ValueError, FileNotFoundError) as e:
+        click.echo(f"ERROR: {e}", err=True)
+        sys.exit(1)
+
+    data = result.to_dict()
+
+    if output:
+        out_path = Path(output)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(out_path, "w") as f:
+            json.dump(data, f, indent=2)
+        click.echo(f"Allocation saved: {out_path}")
+    else:
+        click.echo(json.dumps(data, indent=2))
+
+    click.echo(
+        f"\nStrategy: {strategy} | Budget: {budget:.1%} | "
+        f"Actual: {result.actual_ratio:.1%} | Layers: {len(result.ranks)}",
+        err=True,
+    )
 
 
 if __name__ == "__main__":
