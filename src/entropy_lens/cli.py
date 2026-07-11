@@ -176,5 +176,59 @@ def allocate(csv_path: str, budget: float, strategy: str, config: str, output: s
     )
 
 
+@main.command()
+@click.argument("model_path")
+@click.option("--ranks", "-r", required=True, help="Path to allocation JSON (from 'allocate' command).")
+@click.option("--output", "-o", required=True, help="Output directory for compressed model.")
+@click.option("--dtype", default="float16", help="Model dtype (float16, bfloat16, float32).")
+@click.option("--no-verify", is_flag=True, help="Skip per-layer error verification.")
+def compress(model_path: str, ranks: str, output: str, dtype: str, no_verify: bool):
+    """Compress a model using SVD at the ranks from an allocation JSON.
+
+    Loads the model, applies truncated SVD to each layer at the specified rank,
+    and saves the result as a standard HuggingFace model.
+    """
+    import logging
+
+    from .compress import compress_model
+
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+
+    # Load ranks from JSON
+    ranks_path = Path(ranks)
+    if not ranks_path.exists():
+        click.echo(f"ERROR: Ranks file not found: {ranks_path}", err=True)
+        sys.exit(1)
+
+    with open(ranks_path) as f:
+        alloc_data = json.load(f)
+
+    # The allocate command saves {"ranks": {...}, "strategy": ..., ...}
+    # Accept both the full allocation JSON and a plain {name: rank} dict.
+    if "ranks" in alloc_data and isinstance(alloc_data["ranks"], dict):
+        rank_dict = alloc_data["ranks"]
+    else:
+        rank_dict = alloc_data
+
+    click.echo(f"Model: {model_path}")
+    click.echo(f"Ranks: {len(rank_dict)} layers from {ranks_path}")
+    click.echo(f"Output: {output}")
+    click.echo(f"Dtype: {dtype}")
+    click.echo()
+
+    errors = compress_model(
+        model_path=model_path,
+        ranks=rank_dict,
+        output_path=output,
+        dtype=dtype,
+        verify=not no_verify,
+    )
+
+    if errors:
+        mean_err = sum(errors.values()) / len(errors)
+        max_err = max(errors.values())
+        click.echo(f"\nReconstruction errors: mean={mean_err:.4f}, max={max_err:.4f}")
+
+
 if __name__ == "__main__":
     main()
