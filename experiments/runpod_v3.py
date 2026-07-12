@@ -51,9 +51,11 @@ def compress_cpu(ranks):
     print(f"    Compressed {n} layers on CPU")
     return model
 
-def heal(model, steps=500):
+def heal(model, steps=500, accum=4):
     from peft import LoraConfig, TaskType, get_peft_model
     model.to("cuda")
+    model.gradient_checkpointing_enable()
+    model.enable_input_require_grads()
     cfg = LoraConfig(task_type=TaskType.CAUSAL_LM, r=32, lora_alpha=64, target_modules=["q_proj","k_proj","v_proj","o_proj","gate_proj","up_proj","down_proj"])
     model = get_peft_model(model, cfg); model.train()
     ds = load_dataset("Salesforce/wikitext", "wikitext-2-raw-v1", split="train")
@@ -62,11 +64,17 @@ def heal(model, steps=500):
     chunks = [aids[i:i+512] for i in range(0, len(aids)-512, 512)]
     opt = torch.optim.AdamW(model.parameters(), lr=2e-4)
     for s in range(steps):
-        b = torch.stack(random.sample(chunks, 4)).to("cuda")
-        loss = model(input_ids=b, labels=b).loss
-        loss.backward(); opt.step(); opt.zero_grad()
-        if (s+1) % 100 == 0: print(f"    step {s+1}/{steps} loss={loss.item():.3f}")
+        # micro-batch of 1 with gradient accumulation
+        total_loss = 0.0
+        for _ in range(accum):
+            b = chunks[random.randrange(len(chunks))].unsqueeze(0).to("cuda")
+            loss = model(input_ids=b, labels=b).loss / accum
+            loss.backward()
+            total_loss += loss.item()
+        opt.step(); opt.zero_grad()
+        if (s+1) % 100 == 0: print(f"    step {s+1}/{steps} loss={total_loss:.3f}")
     model = model.merge_and_unload()
+    model.gradient_checkpointing_disable()
     model.to("cpu"); torch.cuda.empty_cache(); gc.collect()
     return model
 
