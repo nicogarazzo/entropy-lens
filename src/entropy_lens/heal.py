@@ -71,7 +71,7 @@ def _load_dataset(dataset_name: str, tokenizer, max_seq_len: int):
     from datasets import load_dataset
 
     if dataset_name == "wikitext":
-        ds = load_dataset("wikitext", "wikitext-2-raw-v1", split="train")
+        ds = load_dataset("Salesforce/wikitext", "wikitext-2-raw-v1", split="train")
         text_column = "text"
     elif dataset_name == "slim_pajama":
         ds = load_dataset(
