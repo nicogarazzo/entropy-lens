@@ -1,0 +1,12 @@
+{
+  "date": "2026-07-12",
+  "script": "experiments/runpod_v3.py",
+  "model": "mistralai/Mistral-7B-v0.3",
+  "heal": {"steps": 500, "lr": 2e-4, "lora_r": 32, "accum": 4},
+  "results": {
+    "baseline": 6.068841457366943,
+    "80pct-uniform": {"compressed": 284099.90625, "healed": 14733.2939453125},
+    "80pct-entropy": {"compressed": 45249.71484375, "healed": 6626.107421875}
+  },
+  "interpretation": "Entropy gana a uniform 6.3x (compressed) y 2.2x (healed) a budget 80%, confirmando la ventaja relativa a escala 7B. Sin embargo las PPLs absolutas son de modelo destruido (baseline 6.07): el budget 80% con SVD naive es demasiado agresivo en Mistral 7B y el healing divergio (loss 7.5 -> 9.7 con lr=2e-4). Este dato queda como regimen agresivo. La pasada v4 (budgets 95/90%, lr=1e-4, 1000 steps) busca el regimen funcional para la curva Pareto del paper."
+}
