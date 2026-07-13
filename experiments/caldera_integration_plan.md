@@ -112,6 +112,38 @@ source. It also does not implement the LPLR alternating-minimization solver
 itself or a lattice quantizer — those remain open engineering work, discussed
 in "Feasibility" below.
 
+### NOTICE — GPL-3.0 acceptance decision (human decision, recorded 2026-07-12)
+
+**The human (Nicolas) has decided to accept GPL-3.0 scope via QuIP#** as the
+quantizer for the CALDERA north star (option 4a above). Concretely:
+
+- `Cornell-RelaxML/quip-sharp` (GPL-3.0, confirmed via its `LICENSE` file:
+  "GNU GENERAL PUBLIC LICENSE, Version 3, 29 June 2007") **may be used** as
+  the lattice quantizer backbone for this project's experiments.
+- `pilancilab/caldera` itself (no LICENSE file, all-rights-reserved) is
+  **still not to be copied, vendored, or paraphrased** — that constraint is
+  independent of the QuIP# decision and remains in force. `src/entropy_lens/lplr.py`
+  is a clean-room reimplementation of the paper's alternating-minimization
+  *idea*, written without consulting CALDERA's source.
+- **This NOTICE does not itself relicense `entropy-lens`.** The repo's
+  `LICENSE` file remains MIT as of this commit. Relicensing (e.g. to
+  GPL-3.0, or isolating GPL-3.0-touching code behind a separate
+  optionally-installed package/process boundary) is a discrete decision the
+  human makes **at publication time**, not something this scaffold or any
+  agent should do unilaterally. Any code path that actually imports/links
+  against quip-sharp (i.e. a real `quantize_fn` built from
+  `entropy_lens.lplr.QUIP_SHARP_WIRING_NOTES`) makes that code path's
+  distribution GPL-3.0-encumbered whether or not `LICENSE` says so — treat
+  `pyproject.toml`'s `license = {text = "MIT"}` as describing the rest of the
+  package, not any future QuIP#-dependent module, until the human formally
+  updates it.
+- Practical effect on this work: `src/entropy_lens/lplr.py` and
+  `experiments/runpod_caldera.py` are written quantizer-agnostic (a
+  `quantize_fn` is injected, never hardcoded), specifically so that whether
+  or not QuIP# ends up wired in, the alternating-minimization *logic* stays
+  clean-room and license-neutral, and only the pod-side adapter that calls
+  into quip-sharp carries the GPL-3.0 obligation.
+
 ## 3. Integration points
 
 | CALDERA concept | Where it lives today | Our replacement |
@@ -276,6 +308,81 @@ not:
 
 ## 6. Feasibility on RunPod L4 24GB, Mistral-7B-v0.3 fp16
 
+### 6a. QuIP# install steps — VERIFIED against the live repo (2026-07-12)
+
+Verified directly via `gh api repos/Cornell-RelaxML/quip-sharp/...` (README,
+`requirements.txt`, `quiptools/setup.py`, `LICENSE`, and the repo tree) in
+this session — not from memory or the paper. Note the repo's own banner: **it
+says QuIP# "is no longer under active development"**, superseded by QTIP
+(`Cornell-RelaxML/qtip`, trellis quantization) — flagging this as a real
+consideration for the human: QuIP# still works and is what CALDERA is built
+on, but is not the authors' current best method.
+
+**Confirmed license**: `LICENSE` file is literally "GNU GENERAL PUBLIC
+LICENSE, Version 3, 29 June 2007" — GPL-3.0, matching what the plan already
+assumed. The README's own licensing note also states "Use of Mistral models
+is governed by the Apache 2.0 license" (relevant since this project targets
+Mistral-7B-v0.3, not Llama).
+
+**Install steps (verbatim from the repo's own README, condensed)**:
+```
+git clone https://github.com/Cornell-RelaxML/quip-sharp
+cd quip-sharp
+pip install -r requirements.txt
+cd quiptools && python setup.py install && cd ..
+pip install fast-hadamard-transform   # repo warns pip install has "had issues"; git clone + pip install -v . is the fallback
+```
+
+**Pinned versions in `requirements.txt` (verified, not paraphrased)**:
+`torch==2.4.0`, `transformers==4.40.1`, `datasets==2.20.0`,
+`flash_attn==2.6.1`, `fast_hadamard_transform==1.0.4.post1`,
+`numpy==2.1.0`, `scipy==1.14.1`, `huggingface_hub==0.24.0`,
+`lm_eval==0.3.0`.
+
+**Real risks this surfaces (upgraded from "expected" to "confirmed via the
+actual pinned files")**:
+1. `flash_attn==2.6.1` is itself a CUDA-extension build known for being slow
+   and finicky to compile (frequently 10-30+ minutes, and version-sensitive
+   to the exact CUDA/torch ABI) — this is a bigger practical risk than the
+   plan's earlier draft implied, independent of quip-sharp's own kernels.
+2. `quiptools/setup.py` builds a CUDA extension (`quiptools_cuda`) from
+   `quiptools_wrapper.cpp` + `quiptools.cu` + `quiptools_e8p_gemv.cu` via
+   `torch.utils.cpp_extension.CUDAExtension`, compiled with `-std=c++20`.
+   This needs an nvcc toolchain that both matches the installed CUDA driver
+   AND supports C++20 — on a stock RunPod L4 image this is very plausibly
+   fine (recent CUDA/gcc), but is a real "verify on first pod boot" item,
+   not a given.
+3. `entropy-lens`'s own `pyproject.toml` pins `torch>=2.1` (loose); quip-sharp
+   wants exactly `torch==2.4.0`. These are compatible (2.4 satisfies >=2.1)
+   but any RunPod base image with a different pre-installed torch build
+   (e.g. one compiled against a different CUDA minor version) could force a
+   torch reinstall, which risks breaking whatever CUDA build flash_attn/
+   quiptools already did against the old torch. Practical mitigation:
+   install quip-sharp's pinned `torch==2.4.0` FIRST, before `pip install -e
+   .` for entropy-lens, so entropy-lens's looser pin doesn't trigger a torch
+   swap after the CUDA extensions are already built against it.
+4. **Pre-quantized Mistral-7B QuIP# checkpoints already exist** on the
+   `relaxml` HF org (`relaxml/Mistral-7b-E8P-2Bit`,
+   `relaxml/Mistral-7b-E8PRVQ-3Bit`, `relaxml/Mistral-7b-E8PRVQ-4Bit`,
+   confirmed present in the repo's own model-zoo table) — these are
+   "non fine-tuned" (i.e. no post-quantization LoRA recovery pass) uniform
+   QuIP# quantizations of the *exact* target model. **This is a much faster
+   path to a real CALDERA-uniform-quality PPL number than building the
+   pipeline from scratch**: load one of these checkpoints, eval WikiText-2
+   PPL directly, and treat that as an upper bound on how good the "uniform"
+   condition (A) in `runpod_caldera.py` could look with a real lattice
+   quantizer instead of the placeholder `round_quantize`. Recommend trying
+   this FIRST on the pod, in parallel with (not instead of) building the
+   quip-sharp adapter for `entropy_lens.lplr`, since it needs zero new code.
+5. Codebook file locations for wiring a real `quantize_fn` (verified via the
+   repo tree, `gh api .../git/trees/main?recursive=1`):
+   `lib/codebook/latticee8_padded12.py` (E8P12, 2-bit),
+   `lib/codebook/latticee8_padded12_rvq3bit.py` (E8PRVQ, 3-bit),
+   `lib/codebook/latticee8_padded12_rvq4bit.py` (E8PRVQ, 4-bit), with
+   `lib/linear/quantized_linear.py` showing the call pattern. See
+   `entropy_lens.lplr.QUIP_SHARP_WIRING_NOTES` for the adapter contract this
+   codebase expects.
+
 - **Whitening / Hessian computation**: already demonstrated feasible in this
   repo (chunked covariance accumulation, `whiten.collect_covariances`); this
   is the easy part and mostly a rerun of existing infra.
@@ -348,3 +455,86 @@ not:
   and remain unverified after this session (I did not transcribe the paper's
   tables). Do not quote either number in a paper draft without pulling the
   primary source table directly.
+
+## 8. Implementation status (2026-07-12, infra pass)
+
+Honest accounting of what exists in the repo right now vs. what is still a
+plan, so the next session (human or agent) doesn't have to re-derive it.
+
+**Built and tested (on this Mac, CPU only, no GPU/CUDA available):**
+- `src/entropy_lens/lplr.py`: clean-room LPLR alternating-minimization
+  solver (`lplr_decompose_raw`, `lplr_decompose_whitened`), written from the
+  paper's description only, no CALDERA source consulted. Takes an injected
+  `quantize_fn` so the alternation logic is decoupled from *how* quantization
+  happens — this is the piece that lets a real QuIP# adapter drop in later
+  without touching the solver.
+- `round_quantize`: a simple per-tensor uniform round-trip function, used
+  ONLY to test the solver's control flow (convergence, monotonicity at fine
+  bit-widths, rank/bit sensitivity). Explicitly NOT a stand-in for QuIP#'s
+  E8P lattice accuracy — see the honesty notices in `lplr.py` and
+  `runpod_caldera.py`.
+- `tests/test_lplr.py`: 19 tests, all passing
+  (`PYTHONPATH=src uv run --extra dev python -m pytest tests/test_lplr.py -q`),
+  covering the fake quantizer's basic behavior, shape/dtype correctness,
+  convergence at fine bit-widths, rank-vs-error and bits-vs-error
+  monotonicity (at fine bit-widths — coarse bit-widths are NOT guaranteed
+  monotone for this solver, which is itself a real, documented finding, not
+  a test-fudge; see the docstring on
+  `TestLPLRDecomposeRaw.test_error_decreases_from_first_to_last_iteration`),
+  edge cases (zero matrix, rank clamping, q_bits=0/lr_bits=0 escape hatches),
+  and the whitened wrapper's equivalence to the raw solver under identity
+  whitening. Every test uses the fake quantizer — zero tests exercise a real
+  lattice quantizer, because none was installable/runnable in this session.
+- Full existing suite (`tests/`, 100+ tests across allocator/compress/
+  extract/heal/spectral/whiten/joint_alloc/lplr) still passes after adding
+  this module — `joint_alloc.py` and `whiten.py` were not modified.
+- `experiments/runpod_caldera.py`: the three-condition experiment script
+  (uniform / joint / baseline). Smoke-tested locally
+  (`PYTHONPATH=src uv run python experiments/runpod_caldera.py --smoke-test`,
+  synthetic 64x64 matrices, CPU, fake quantizer, seconds) to catch plumbing
+  bugs in the allocation + LPLR call chain. **This smoke test validates
+  wiring only — it has never touched the real Mistral-7B weights, GPU
+  memory behavior, or a real quantizer.**
+
+**NOT run, and cannot be run from this Mac (no CUDA):**
+- The actual `experiments/runpod_caldera.py` end-to-end run against
+  Mistral-7B-v0.3 (loading the model, running whitening calibration,
+  compressing all layers, evaluating WikiText-2 PPL for all three
+  conditions). This needs the RunPod L4 GPU box.
+- QuIP# itself: never cloned, built, or executed in this session. Its
+  install steps in section 6a are transcribed from the live repo's README/
+  requirements.txt/setup.py (verified via `gh api`), not from having run
+  them.
+- Any real lattice-quantized PPL number. Everything `runpod_caldera.py`
+  would currently produce (with `--quantizer fake`, the only implemented
+  option) is a fair uniform-vs-joint *allocation* comparison under a shared
+  crude quantizer, not a CALDERA-comparable absolute number.
+
+**Exact command to run on the pod** (after `git pull` on this branch and
+`pip install -q -e .`, following the header comment in
+`experiments/runpod_caldera.py`):
+```
+cd /workspace/entropy-lens && git pull && pip install -q -e .
+nohup python experiments/runpod_caldera.py > /workspace/experiment_caldera.log 2>&1 &
+tail -f /workspace/experiment_caldera.log
+```
+This runs with `--quantizer fake` (the default) and
+`--target-bits-per-param 3.0`. Results land incrementally in
+`/workspace/results_caldera.json` (baseline, then uniform, then joint, each
+written as soon as that condition finishes, so a crash doesn't lose earlier
+conditions). Swapping in a real quantizer requires first building the
+QuIP#-backed adapter described in
+`entropy_lens.lplr.QUIP_SHARP_WIRING_NOTES` and passing `--quantizer quip`
+(currently a deliberate `NotImplementedError` stub, not silently falling
+back to fake).
+
+**Bar to beat — still not verified against the primary source** (unchanged
+from section 5/7 above, restated here for visibility): do not quote a
+CALDERA or D-Rank absolute PPL number as "the bar" without pulling the
+primary tables. The concrete, defensible bar for this experiment as shipped
+is: does condition (B) joint beat condition (A) uniform at matched
+bits/param, on our own harness, holding the (currently fake) quantizer
+fixed. That is a real, answerable question the script is built to answer;
+"does it also beat CALDERA's paper numbers" is a separate question blocked
+on (1) a real QuIP#-backed quantizer and (2) transcribing CALDERA's Table
+2/3, neither done here.
