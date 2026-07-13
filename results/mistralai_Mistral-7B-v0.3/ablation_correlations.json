@@ -1,0 +1,36 @@
+{
+  "model": "mistralai/Mistral-7B-v0.3",
+  "baseline_ppl": 5.737799167633057,
+  "config": {
+    "n_chunks": 25,
+    "chunk": 1024,
+    "trunc_ratio": 0.5,
+    "n_layers": 32
+  },
+  "correlations": {
+    "s1_gap": {
+      "pearson_r": 0.47549050476694626,
+      "pearson_p": 0.005952237739765183,
+      "spearman_r": 0.43841642228739,
+      "spearman_p": 0.012076318375102525
+    },
+    "s1_raw": {
+      "pearson_r": -0.27696606782493577,
+      "pearson_p": 0.12487702024162868,
+      "spearman_r": 0.007697947214076245,
+      "spearman_p": 0.9666468330034554
+    },
+    "s1_eff": {
+      "pearson_r": -0.4972154265844303,
+      "pearson_p": 0.003789221731410087,
+      "spearman_r": -0.374633431085044,
+      "spearman_p": 0.03463898742598205
+    },
+    "s2_eff": {
+      "pearson_r": -0.3396365720685384,
+      "pearson_p": 0.0571967759340031,
+      "spearman_r": -0.468841642228739,
+      "spearman_p": 0.00679590896235961
+    }
+  }
+}

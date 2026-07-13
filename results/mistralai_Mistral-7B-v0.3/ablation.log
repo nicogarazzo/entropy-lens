@@ -1,0 +1,48 @@
+nohup: ignoring input
+=== Per-layer naive-SVD ablation (falsable loop part 2) ===
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+Loading weights:   0%|          | 0/291 [00:00<?, ?it/s]Loading weights:   0%|          | 1/291 [00:01<06:36,  1.37s/it]Loading weights:   2%|▏         | 6/291 [00:01<00:53,  5.32it/s]Loading weights:   4%|▍         | 13/291 [00:01<00:28,  9.61it/s]Loading weights:   5%|▌         | 16/291 [00:02<00:25, 10.72it/s]Loading weights:   8%|▊         | 22/291 [00:02<00:27,  9.64it/s]Loading weights:  11%|█         | 31/291 [00:03<00:25, 10.06it/s]Loading weights:  11%|█▏        | 33/291 [00:03<00:25, 10.27it/s]Loading weights:  14%|█▎        | 40/291 [00:04<00:23, 10.90it/s]Loading weights:  14%|█▍        | 42/291 [00:04<00:21, 11.41it/s]Loading weights:  16%|█▌        | 46/291 [00:04<00:18, 13.09it/s]Loading weights:  17%|█▋        | 49/291 [00:05<00:23, 10.22it/s]Loading weights:  18%|█▊        | 51/291 [00:05<00:22, 10.51it/s]Loading weights:  20%|█▉        | 58/291 [00:05<00:21, 11.09it/s]Loading weights:  21%|██        | 60/291 [00:06<00:26,  8.82it/s]Loading weights:  23%|██▎       | 67/291 [00:06<00:17, 12.66it/s]Loading weights:  24%|██▎       | 69/291 [00:06<00:16, 13.26it/s]Loading weights:  25%|██▌       | 73/291 [00:06<00:14, 14.71it/s]Loading weights:  26%|██▌       | 76/291 [00:07<00:18, 11.51it/s]Loading weights:  27%|██▋       | 78/291 [00:07<00:19, 10.69it/s]Loading weights:  29%|██▉       | 85/291 [00:08<00:19, 10.45it/s]Loading weights:  32%|███▏      | 94/291 [00:08<00:15, 12.73it/s]Loading weights:  35%|███▍      | 101/291 [00:09<00:10, 17.63it/s]Loading weights:  36%|███▌      | 104/291 [00:09<00:18,  9.86it/s]Loading weights:  38%|███▊      | 112/291 [00:10<00:15, 11.80it/s]Loading weights:  39%|███▉      | 114/291 [00:10<00:16, 10.99it/s]Loading weights:  42%|████▏     | 121/291 [00:11<00:13, 12.78it/s]Loading weights:  42%|████▏     | 123/291 [00:11<00:12, 13.43it/s]Loading weights:  44%|████▎     | 127/291 [00:11<00:11, 14.80it/s]Loading weights:  45%|████▍     | 130/291 [00:11<00:14, 10.77it/s]Loading weights:  48%|████▊     | 139/291 [00:12<00:12, 12.02it/s]Loading weights:  48%|████▊     | 141/291 [00:12<00:13, 11.32it/s]Loading weights:  51%|█████     | 148/291 [00:13<00:12, 11.52it/s]Loading weights:  52%|█████▏    | 150/291 [00:13<00:13, 10.61it/s]Loading weights:  54%|█████▍    | 157/291 [00:14<00:12, 10.97it/s]Loading weights:  57%|█████▋    | 166/291 [00:14<00:10, 11.95it/s]Loading weights:  58%|█████▊    | 168/291 [00:15<00:09, 12.47it/s]Loading weights:  60%|██████    | 175/291 [00:15<00:10, 11.08it/s]Loading weights:  63%|██████▎   | 184/291 [00:16<00:09, 11.39it/s]Loading weights:  66%|██████▋   | 193/291 [00:17<00:08, 11.23it/s]Loading weights:  69%|██████▉   | 202/291 [00:17<00:07, 12.56it/s]Loading weights:  73%|███████▎  | 211/291 [00:18<00:06, 11.69it/s]Loading weights:  76%|███████▌  | 220/291 [00:19<00:05, 12.16it/s]Loading weights:  79%|███████▊  | 229/291 [00:20<00:04, 12.49it/s]Loading weights:  79%|███████▉  | 231/291 [00:20<00:04, 12.87it/s]Loading weights:  82%|████████▏ | 238/291 [00:20<00:04, 12.44it/s]Loading weights:  84%|████████▍ | 244/291 [00:21<00:03, 15.29it/s]Loading weights:  85%|████████▍ | 247/291 [00:21<00:03, 11.45it/s]Loading weights:  87%|████████▋ | 253/291 [00:21<00:02, 13.47it/s]Loading weights:  88%|████████▊ | 256/291 [00:22<00:03, 11.26it/s]Loading weights:  91%|█████████ | 265/291 [00:23<00:02, 11.46it/s]Loading weights:  92%|█████████▏| 267/291 [00:23<00:02, 11.89it/s]Loading weights:  94%|█████████▍| 274/291 [00:23<00:01, 11.95it/s]Loading weights:  97%|█████████▋| 283/291 [00:24<00:00, 13.76it/s]Loading weights:  98%|█████████▊| 285/291 [00:24<00:00, 13.88it/s]Loading weights: 100%|██████████| 291/291 [00:24<00:00, 11.87it/s]
+Baseline PPL (first 25 chunks): 5.738
+  layer  0: ppl=      5.87  dlogppl=0.022  gap=3.275
+  layer  1: ppl=     25.26  dlogppl=1.482  gap=3.733
+  layer  2: ppl=      5.81  dlogppl=0.013  gap=2.696
+  layer  3: ppl=      5.81  dlogppl=0.013  gap=2.664
+  layer  4: ppl=      5.82  dlogppl=0.015  gap=2.642
+  layer  5: ppl=      5.85  dlogppl=0.019  gap=2.549
+  layer  6: ppl=      5.99  dlogppl=0.043  gap=2.663
+  layer  7: ppl=      5.92  dlogppl=0.031  gap=2.522
+  layer  8: ppl=      5.84  dlogppl=0.017  gap=2.626
+  layer  9: ppl=      5.88  dlogppl=0.024  gap=2.391
+  layer 10: ppl=      5.81  dlogppl=0.012  gap=2.584
+  layer 11: ppl=      5.85  dlogppl=0.020  gap=2.361
+  layer 12: ppl=      5.84  dlogppl=0.018  gap=2.309
+  layer 13: ppl=      5.81  dlogppl=0.013  gap=2.357
+  layer 14: ppl=      5.86  dlogppl=0.022  gap=2.362
+  layer 15: ppl=      5.84  dlogppl=0.017  gap=2.245
+  layer 16: ppl=      5.84  dlogppl=0.017  gap=2.393
+  layer 17: ppl=      5.89  dlogppl=0.026  gap=2.600
+  layer 18: ppl=      5.96  dlogppl=0.038  gap=2.616
+  layer 19: ppl=      5.93  dlogppl=0.034  gap=2.742
+  layer 20: ppl=      5.89  dlogppl=0.026  gap=2.623
+  layer 21: ppl=      5.87  dlogppl=0.023  gap=2.702
+  layer 22: ppl=      5.89  dlogppl=0.026  gap=2.648
+  layer 23: ppl=      5.85  dlogppl=0.020  gap=2.717
+  layer 24: ppl=      5.85  dlogppl=0.020  gap=2.682
+  layer 25: ppl=      5.84  dlogppl=0.018  gap=2.754
+  layer 26: ppl=      5.83  dlogppl=0.016  gap=2.784
+  layer 27: ppl=      5.86  dlogppl=0.022  gap=2.924
+  layer 28: ppl=      5.91  dlogppl=0.030  gap=2.978
+  layer 29: ppl=      6.00  dlogppl=0.045  gap=3.208
+  layer 30: ppl=      6.18  dlogppl=0.075  gap=3.763
+  layer 31: ppl=      7.03  dlogppl=0.203  gap=4.423
+
+=== Correlations of delta_log_ppl vs predictor (per layer, n=32) ===
+  s1_gap  : Pearson r=+0.475 (p=5.95e-03)  Spearman r=+0.438 (p=1.21e-02)
+  s1_raw  : Pearson r=-0.277 (p=1.25e-01)  Spearman r=+0.008 (p=9.67e-01)
+  s1_eff  : Pearson r=-0.497 (p=3.79e-03)  Spearman r=-0.375 (p=3.46e-02)
+  s2_eff  : Pearson r=-0.340 (p=5.72e-02)  Spearman r=-0.469 (p=6.80e-03)
+generated new fontManager
+
+Saved /workspace/ablation_per_layer.csv, /workspace/ablation_correlations.json, /workspace/ablation_gap_vs_damage.png
