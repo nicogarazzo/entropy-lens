@@ -3,17 +3,20 @@
 from __future__ import annotations
 
 import csv
+import math
 from pathlib import Path
 
 import numpy as np
 import pytest
 
+from entropy_lens import joint_alloc
 from entropy_lens.joint_alloc import (
     ALLOWED_BITS,
     JointAllocation,
     MatrixSpec,
     allocate_joint_rank_bits,
     load_matrices_from_csv,
+    model_error,
 )
 
 
@@ -275,3 +278,168 @@ def test_to_dict_shape():
     assert set(d["assignments"].keys()) == {m.name for m in matrices}
     for entry in d["assignments"].values():
         assert "rank" in entry and "bits" in entry
+
+
+# ---------------------------------------------------------------------------
+# Joint Lagrangian solver: budget equality, coupled monotonicity, error
+# monotonicity, and the water-filling optimality condition.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("target_bits_per_param", [0.5, 1.0, 2.0, 2.5, 3.5])
+def test_budget_is_respected_with_tight_tolerance(target_bits_per_param):
+    """With q_bits=0 (pure low-rank, no fixed backbone floor) and large
+    (m+n) per matrix, integer rounding of the closed-form continuous rank
+    is a small perturbation, so the realized budget should land close to
+    the target -- much tighter than the generous rel=0.25 smoke test above,
+    since this is checking the Lagrangian bisection itself converges, not
+    just "in the right ballpark"."""
+    matrices = _make_matrices(n=32, shape_m=4096, shape_n=4096)
+    alloc = allocate_joint_rank_bits(
+        matrices, target_bits_per_param=target_bits_per_param, q_bits=0
+    )
+    assert alloc.actual_bits_per_param == pytest.approx(
+        target_bits_per_param, rel=0.05
+    )
+
+
+def test_higher_s2_gets_more_rank_at_fixed_bits():
+    """Holding shape, S1, bits, and lambda fixed, higher S2_eff (flatter
+    tail, smaller gamma_i = exp(-S2_eff)) should give MORE rank via the
+    closed-form rank*_i(bits, lambda): a smaller gamma means the captured
+    energy is cheaper to quantize, which raises the denominator
+    (1 - gamma*2^{-2*bits}) in the closed form and therefore raises the
+    optimal rank for the same price. This is the real, provable
+    monotonicity from the derivation (see module docstring / plan doc),
+    checked directly on the closed form to isolate it from the discrete
+    bit-choice confound described in
+    `test_full_joint_solve_can_trade_rank_for_bits_across_s2` below.
+    """
+    m_low = MatrixSpec(name="low_s2", shape_m=4096, shape_n=4096, s1_eff=5.0, s2_eff=1.0)
+    m_mid = MatrixSpec(name="mid_s2", shape_m=4096, shape_n=4096, s1_eff=5.0, s2_eff=3.0)
+    m_high = MatrixSpec(name="high_s2", shape_m=4096, shape_n=4096, s1_eff=5.0, s2_eff=6.0)
+    lam = 1e-8
+    for bits in ALLOWED_BITS:
+        r_low = joint_alloc._optimal_rank_for_bits(
+            m_low, bits, lam, joint_alloc._decay_scale(m_low), joint_alloc._quant_gamma(m_low)
+        )
+        r_mid = joint_alloc._optimal_rank_for_bits(
+            m_mid, bits, lam, joint_alloc._decay_scale(m_mid), joint_alloc._quant_gamma(m_mid)
+        )
+        r_high = joint_alloc._optimal_rank_for_bits(
+            m_high, bits, lam, joint_alloc._decay_scale(m_high), joint_alloc._quant_gamma(m_high)
+        )
+        assert r_low <= r_mid <= r_high
+
+
+def test_full_joint_solve_can_trade_rank_for_bits_across_s2():
+    """In the *full* joint solve (bits chosen per-matrix, not held fixed),
+    "higher S2_eff -> less rank" is NOT a universal property, and asserting
+    it would be dishonest about what the model does. Low-S2_eff matrices
+    (peaked, structured tail) need MORE bits (see
+    test_higher_s2_gets_more_bits_same_shape) to control their captured-
+    energy distortion; those extra bits cost more per unit of rank, so at
+    a fixed total budget a low-S2 matrix can end up with *less* rank than
+    a high-S2 matrix even though, at any *fixed* bit-width, it would want
+    *more* rank per test_higher_s2_gets_more_rank_at_fixed_bits above. This
+    test documents and locks in that emergent, economically-driven
+    trade-off (a genuine signature of joint -- not decoupled -- allocation)
+    rather than asserting a monotonicity that only holds in the fixed-bits
+    slice of the problem.
+    """
+    matrices = [
+        MatrixSpec(name="low_s2", shape_m=4096, shape_n=4096, s1_eff=5.0, s2_eff=1.0),
+        MatrixSpec(name="mid_s2", shape_m=4096, shape_n=4096, s1_eff=5.0, s2_eff=3.0),
+        MatrixSpec(name="high_s2", shape_m=4096, shape_n=4096, s1_eff=5.0, s2_eff=6.0),
+    ]
+    alloc = allocate_joint_rank_bits(matrices, target_bits_per_param=1.0, q_bits=0)
+    r_low, b_low = alloc.assignments["low_s2"]
+    r_mid, b_mid = alloc.assignments["mid_s2"]
+    r_high, b_high = alloc.assignments["high_s2"]
+    # Bits: monotone non-increasing in S2_eff (re-confirms the direction
+    # already covered by test_higher_s2_gets_more_bits_same_shape).
+    assert b_low >= b_mid >= b_high
+    # Rank: mid and high (both already at the cheapest useful bit-width,
+    # since their tails are flat enough that extra precision buys little)
+    # get at least as much rank as low (which pays a bits premium).
+    assert r_mid >= r_low
+    assert r_high >= r_low
+
+
+def test_model_error_decreases_with_budget():
+    """A larger total bit budget should never increase the model's total
+    reconstruction error (weak monotonicity of the Pareto curve)."""
+    matrices = _make_matrices(n=24)
+    budgets = [0.4, 0.8, 1.5, 2.5, 4.0]
+    errors = []
+    for b in budgets:
+        alloc = allocate_joint_rank_bits(matrices, target_bits_per_param=b, q_bits=0)
+        errors.append(alloc.total_model_error)
+        # total_model_error should match a fresh model_error() computation
+        assert alloc.total_model_error == pytest.approx(
+            model_error(matrices, alloc.assignments)
+        )
+    for e_small, e_large in zip(errors, errors[1:]):
+        assert e_large <= e_small + 1e-9
+
+
+def test_optimality_marginal_rates_converge_to_lambda():
+    """Water-filling optimality condition: at the converged lambda, every
+    matrix's marginal error reduction per marginal bit spent on rank
+    (evaluated at its own assigned bits_i) should equal the shared
+    Lagrange multiplier, for matrices whose rank is not pinned to the
+    [1, max_rank] boundary (boundary matrices only satisfy a KKT
+    inequality, not equality, so they are excluded here).
+
+    marginal_rate_i = -dE_i/dD |_{D=rank_i, b=bits_i} / (bits_i*(m_i+n_i))
+                     = rho_i(rank_i) * (1 - gamma_i*2^{-2*bits_i})
+                       / (D_eff_i * bits_i * (m_i+n_i))
+    """
+    matrices = _make_matrices(n=40, shape_m=4096, shape_n=4096)
+    alloc = allocate_joint_rank_bits(matrices, target_bits_per_param=1.2, q_bits=0)
+    assert alloc.lagrange_multiplier > 0.0
+
+    rates = []
+    for m in matrices:
+        rank, bits = alloc.assignments[m.name]
+        if rank <= 1 or rank >= m.max_rank:
+            continue  # boundary-pinned: only an inequality holds, skip
+        d_eff = joint_alloc._decay_scale(m)
+        gamma = joint_alloc._quant_gamma(m)
+        rho = joint_alloc._residual_energy(rank, d_eff)
+        rate = (rho * (1.0 - gamma * (2.0 ** (-2 * bits)))) / (
+            d_eff * bits * (m.shape_m + m.shape_n)
+        )
+        rates.append(rate)
+
+    assert len(rates) >= 5, "expected most matrices to be interior at this budget"
+    rates = np.array(rates)
+    # All interior matrices should agree with lambda to within a small
+    # relative tolerance (rounding to integer rank is the main source of
+    # residual disagreement).
+    rel_err = np.abs(rates - alloc.lagrange_multiplier) / alloc.lagrange_multiplier
+    assert np.median(rel_err) < 0.15
+    assert np.max(rel_err) < 0.6
+
+
+def test_generous_budget_gives_zero_lambda_and_max_rank():
+    """When the budget comfortably exceeds what full rank at the cheapest
+    useful bits would cost, the unconstrained (lambda=0) solution should
+    already fit: no scarcity, so the multiplier is exactly 0 and rank
+    saturates at max_rank for every matrix."""
+    matrices = _make_matrices(n=6, shape_m=64, shape_n=64)
+    alloc = allocate_joint_rank_bits(matrices, target_bits_per_param=1e6, q_bits=0)
+    assert alloc.lagrange_multiplier == 0.0
+    for m in matrices:
+        rank, _bits = alloc.assignments[m.name]
+        assert rank == m.max_rank
+
+
+def test_model_error_helper_matches_manual_computation():
+    m = MatrixSpec(name="x", shape_m=100, shape_n=100, s1_eff=2.0, s2_eff=1.0)
+    assignments = {"x": (10, 3)}
+    d_eff = math.exp(2.0)
+    gamma = math.exp(-1.0)
+    rho = math.exp(-10.0 / d_eff)
+    expected = rho + (1.0 - rho) * gamma * (2.0 ** (-6))
+    assert model_error([m], assignments) == pytest.approx(expected)
