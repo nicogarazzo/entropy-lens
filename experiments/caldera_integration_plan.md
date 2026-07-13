@@ -230,21 +230,205 @@ def allocate_joint_rank_bits(
    cap** in this scaffold — see "Known gaps" immediately below, this is the
    most important open design question.
 
+## 4b. Resolved: joint Lagrangian / water-filling optimization (2026-07-12)
+
+**Status: implemented in `allocate_joint_rank_bits`, replacing the two-phase
+scaffold in section 4 above.** Section 4 and gap #1 immediately below are
+kept for the historical record (the scaffold's own honest account of why the
+naive `min(rank, d_star)` cap doesn't work); this section is what actually
+runs today.
+
+### Problem formalization
+
+For each matrix `i`, storage is `W_i ~= Q_i + L_i R_i` with backbone `Q_i`
+fixed at a global `q_bits`, and low-rank factors `L_i` (`m_i x rank_i`),
+`R_i` (`rank_i x n_i`) at `bits_i` each. The joint allocation problem:
+
+```
+minimize_{rank_i, bits_i}   sum_i E_i(rank_i, bits_i)
+
+subject to   sum_i [ q_bits * m_i * n_i + bits_i * rank_i * (m_i + n_i) ]
+                 <= target_bits_per_param * sum_i m_i * n_i
+             1 <= rank_i <= min(m_i, n_i),   bits_i in {2, 3, 4}
+```
+
+### Error model
+
+`E_i` needs to be a real function of both knobs, coupling them, or there is
+nothing to jointly optimize. We build it from the two spectral quantities
+already computed by `spectral.py` over the whitened spectrum:
+
+- **Residual energy after rank truncation.** Model the fraction of
+  Frobenius energy *not yet* captured by a rank-`D` truncation as an
+  exponential decay in `D`:
+
+  ```
+  rho_i(D) = exp(-D / D_eff_i),      D_eff_i = exp(S1_eff_i)
+  ```
+
+  `rho_i(0) = 1` (no rank spent, nothing captured), decaying to 0. This is
+  exactly the entropy-compression law's functional form (`D_min(epsilon) ~
+  exp(S1)`): solving `rho_i(D) = epsilon^2` for `D` gives
+  `D = D_eff_i * ln(1/epsilon^2)`, i.e. the rank needed for a fixed relative
+  error scales linearly with `D_eff_i = exp(S1_eff_i)`, matching the law's
+  claim that a more spread-out whitened head (higher `S1_eff`) needs
+  exponentially more rank for the same fidelity.
+
+- **Quantization distortion on the captured energy.** The energy
+  `1 - rho_i(D)` that *is* captured lives in `L_i, R_i` and is stored at
+  `bits_i`. High-rate scalar/lattice quantization theory gives a distortion
+  contribution proportional to `2^{-2*bits}` (each extra bit halves the
+  error standard deviation, quarters the MSE — the same rate-distortion
+  scaling CALDERA's own QuIP#-based quantizer targets). The proportionality
+  constant `gamma_i` is where `S2_eff` enters:
+
+  ```
+  gamma_i = exp(-S2_eff_i) = 1 / D*_i
+  ```
+
+  A flat, quasi-isotropic tail (high `S2_eff`, large participation ratio
+  `D*_i = exp(S2_eff_i)`) is close to what a quantizer is already good at
+  representing at a given bit budget, so `gamma_i` — the *excess* distortion
+  coefficient on top of the baseline `2^{-2*bits}` rate — is small. A peaked,
+  structured tail (low `S2_eff`) is a worse match for the quantizer's
+  implicit prior, so `gamma_i` is larger: more bits are needed to reach the
+  same distortion. This direction is what the existing scaffold's bit
+  allocation already asserted (and its property test enforces): low
+  `S2_eff` -> more bits, high `S2_eff` -> fewer bits.
+
+- **Combined per-matrix objective** (drops the fixed-`q_bits` backbone's own
+  distortion contribution, a constant that doesn't affect the `(D, bits)`
+  argmin):
+
+  ```
+  E_i(D, bits) = rho_i(D) + (1 - rho_i(D)) * gamma_i * 2^{-2*bits}
+  ```
+
+This is the resolution to gap #1 below: `D*` no longer acts as a hard,
+budget-breaking cap on rank. Instead it sets *how expensive it is to
+quantize whatever rank is spent* — so the "head stops being worth more rank"
+intuition emerges as bits becoming the cheaper way to reduce error once the
+captured-energy penalty term dominates, and the budget is always
+achievable because rank and bits remain continuously tradeable against each
+other, never pinned to an infeasible combination.
+
+### Lagrangian relaxation / water-filling derivation
+
+Relax the budget constraint with a multiplier `lambda >= 0` (economically:
+the price of one bit of LR storage). The Lagrangian
+
+```
+L(rank, bits, lambda) = sum_i E_i(rank_i, bits_i)
+                        + lambda * ( sum_i bits_i*rank_i*(m_i+n_i) - lr_budget )
+```
+
+is **separable across matrices** for fixed `lambda`: each matrix
+independently solves
+
+```
+min_{rank_i, bits_i}   E_i(rank_i, bits_i) + lambda * bits_i * rank_i * (m_i+n_i)
+```
+
+For a *fixed* `bits`, stationarity in `rank` (`d/dD [rho_i(D)*(1 -
+gamma_i*2^{-2*bits}) + lambda*bits*(m+n)*D] = 0`, using
+`rho_i'(D) = -(1/D_eff_i)*rho_i(D)`) gives a closed form:
+
+```
+rank*_i(bits, lambda) = -D_eff_i * ln(
+    lambda * bits * (m_i+n_i) * D_eff_i / (1 - gamma_i * 2^{-2*bits})
+)
+```
+
+clamped to `[0, max_rank_i]` (and to `arg <= 0 => full rank`,
+`arg >= 1 => 0 rank`, handling the boundary cases explicitly). Since
+`bits_choices` is a small, fixed set (`{2,3,4}` by default), evaluating the
+Lagrangian at each candidate `bits` with its closed-form optimal `rank`
+plugged in and taking the arg-min over `bits_choices` gives an **exact**
+solve of the per-layer *joint* `(rank, bits)` inner problem — not an
+approximation, since the discrete axis is exhaustively searched and the
+continuous axis has a closed form for each discrete choice
+(`_solve_layer` in `joint_alloc.py`).
+
+`lambda` itself is found by bisection: total LR-budget cost is monotonically
+non-increasing in `lambda` (a higher per-bit price buys less rank, and
+eventually pushes matrices to lower `bits`, at every layer), so a standard
+bisection converges to the budget-matching `lambda` (`_lr_cost_at_lambda`).
+Final integer ranks come from rounding the converged continuous
+`rank*_i(bits_i, lambda)` — the only place non-exactness enters relative to
+the continuous relaxation, and negligible at the matrix sizes here
+(rounding error is O(1) rank out of hundreds-to-thousands).
+
+**Optimality condition (checked in tests).** At convergence, for every
+matrix whose rank is *not* pinned to `1` or `max_rank_i` (i.e. an interior
+solution), the marginal error reduction per marginal bit spent on rank
+equals `lambda`:
+
+```
+marginal_rate_i = rho_i(rank_i) * (1 - gamma_i * 2^{-2*bits_i})
+                  / (D_eff_i * bits_i * (m_i + n_i))
+                = lambda
+```
+
+This is the classical water-filling equal-marginal-value condition,
+generalized to a rank+bits joint currency — verified numerically in
+`tests/test_joint_alloc.py::test_optimality_marginal_rates_converge_to_lambda`
+(median relative deviation from `lambda` across interior matrices `< 15%`,
+driven by integer rounding).
+
+**An honest, observed subtlety.** "Higher `S2_eff` -> less rank" is *not* a
+universal property of the full joint solve, even though — holding `bits`
+fixed — the closed form *is* monotonically increasing in `S2_eff` (smaller
+`gamma_i` raises the achievable rank at the same price;
+`test_higher_s2_gets_more_rank_at_fixed_bits`). In the full solve, a
+low-`S2_eff` matrix may choose *higher* `bits` (correctly, per its peaked
+tail), and since higher `bits` costs more storage per unit of rank, that
+same matrix can end up with *less* total rank at a fixed budget than a
+high-`S2_eff` matrix that settled for cheaper bits and could therefore
+afford more rank (`test_full_joint_solve_can_trade_rank_for_bits_across_s2`).
+This is a genuine, economically-driven signature of *joint* (as opposed to
+decoupled) allocation, not a bug — but it means "S2 always monotonically
+suppresses rank" is the wrong mental model once bits are free to vary; the
+correct statement is the Lagrangian equal-marginal-value condition above.
+
+### What is still a modeling assumption, not a measurement
+
+- `D_eff_i = exp(S1_eff_i)` and `gamma_i = exp(-S2_eff_i)` are first-
+  principles functional forms consistent with the entropy-compression law
+  and standard high-rate quantization theory, but the *exact* proportionality
+  constants (dropped here, since they don't affect the `(rank, bits)`
+  argmin at fixed `q_bits`) have not been fit against real reconstruction
+  error. `results/mistralai_Mistral-7B-v0.3/results_v5b_whitened.csv`
+  provides `dmin_eff_{5,10,20,50}pct` — real `(rank, epsilon)` anchor points
+  per matrix — which could be used to fit a per-matrix decay rate directly
+  (replacing the `exp(S1_eff)` assumption with a regression on the actual
+  data) as a follow-up validation; `experiments/joint_alloc_validation.md`
+  reports the correlation between the assumed and the data-implied decay
+  scale as an honest cross-check, without replacing the model wholesale in
+  this pass.
+- The quantization-distortion proportionality (`2^{-2*bits}`, and folding
+  `gamma_i` in as the only S2-dependence) is the standard high-rate scalar
+  quantizer approximation; CALDERA's actual QuIP# lattice quantizer has a
+  different (better) rate-distortion curve, which would change the absolute
+  bit thresholds without changing the *shape* of the argument (rank and bits
+  remain jointly coupled through whatever the true distortion curve is).
+
 ### Known gaps in the scaffold (be honest about what's unfinished)
 
-1. **D* is not a hard constraint yet.** The original design intent (S2 caps
-   how much rank a matrix may absorb before bits become more efficient) was
-   implemented and then reverted during testing: a hard `min(rank, d_star)`
+1. ~~**D* is not a hard constraint yet.**~~ **Resolved (2026-07-12), see
+   section 4b above.** The original design intent (S2 caps how much rank a
+   matrix may absorb before bits become more efficient) was implemented and
+   then reverted during testing: a hard `min(rank, d_star)`
    makes `target_bits_per_param` unreachable whenever `d_star` is small
    relative to `max_rank` for many matrices simultaneously, because the
-   current algorithm doesn't reopen the bit-width choice to spend the
-   resulting surplus (bits are fixed by S2 in step 3, independently of
-   whether rank saturated its cap in step 2). The correct fix is a proper
-   joint (not two-phase) optimization — e.g. Lagrangian relaxation with
-   coupled multipliers on rank and bits simultaneously (this is what D-Rank,
-   arXiv:2509.25622, does for rank alone, per the mesa notes) — or a
-   redistribution pass that reroutes budget from capped matrices to
-   uncapped ones. Left as the first real research task, not scaffolding.
+   original two-phase algorithm didn't reopen the bit-width choice to spend
+   the resulting surplus (bits were fixed by S2 independently of whether
+   rank saturated its cap). The fix implemented is a proper joint (not
+   two-phase) Lagrangian relaxation with a coupled multiplier on rank and
+   bits simultaneously (this is the family of approach D-Rank,
+   arXiv:2509.25622, uses for rank alone, per the mesa notes) rather than a
+   hard cap: `D*` enters as the quantization-efficiency term `gamma_i =
+   1/D*_i` inside a genuinely joint error model, so the budget constraint
+   is always satisfiable by construction (see section 4b).
 2. **`q_bits` (the backbone) is a single global scalar**, matching CALDERA's
    current behavior exactly, but leaving unused the fact that entropy-lens
    could in principle also vary the backbone's precision per-layer (a further
