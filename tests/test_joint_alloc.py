@@ -129,6 +129,28 @@ def test_load_matrices_from_csv(tmp_path: Path):
     assert matrices[1].max_rank == 4096  # min(4096, 14336)
 
 
+def test_load_matrices_from_csv_shapes_fallback(tmp_path: Path):
+    # A whitened CSV (runpod_v5.py output) has no shape_m/shape_n columns;
+    # shapes must be supplied via the `shapes` dict keyed by proj_type.
+    csv_path = tmp_path / "whitened.csv"
+    with open(csv_path, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["name", "layer", "proj_type", "s1_eff", "s2_eff"])
+        writer.writerow(["layer_0.q_proj", "0", "q_proj", "5.0", "3.0"])
+        writer.writerow(["layer_0.down_proj", "0", "down_proj", "6.0", "4.0"])
+
+    shapes = {"q_proj": (4096, 4096), "down_proj": (4096, 14336)}
+    matrices = load_matrices_from_csv(csv_path, shapes=shapes)
+    assert len(matrices) == 2
+    assert matrices[0].shape_m == 4096 and matrices[0].shape_n == 4096
+    assert matrices[1].shape_m == 4096 and matrices[1].shape_n == 14336
+    assert matrices[1].max_rank == 4096
+
+    # Without shapes and without columns, it must fail loudly, not silently.
+    with pytest.raises(ValueError, match="no shape_m/shape_n"):
+        load_matrices_from_csv(csv_path)
+
+
 # ---------------------------------------------------------------------------
 # Property tests: allocate_joint_rank_bits
 # ---------------------------------------------------------------------------

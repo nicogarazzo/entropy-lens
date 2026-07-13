@@ -83,6 +83,8 @@ log = logging.getLogger("runpod_caldera")
 
 import torch
 
+from entropy_lens.allocator import infer_shapes_from_config
+from entropy_lens.extract import _resolve_model_path
 from entropy_lens.joint_alloc import (
     MatrixSpec,
     allocate_joint_rank_bits,
@@ -304,8 +306,14 @@ def main() -> None:
     quantize_fn = get_quantize_fn(args.quantizer)
 
     log.info(f"=== runpod_caldera: uniform vs joint vs baseline @ {args.target_bits_per_param} bits/param ===")
-    matrices = load_matrices_from_csv(CSV_V5B)
-    log.info(f"loaded {len(matrices)} matrix specs from {CSV_V5B}")
+    # The v5b whitened CSV stores spectral stats but not matrix shapes;
+    # infer (m, n) per proj_type from the model config (reuses the tested
+    # allocator machinery) so storage/rank math is architecture-correct.
+    model_dir = _resolve_model_path(MODEL)
+    shapes = infer_shapes_from_config(f"{model_dir}/config.json")
+    matrices = load_matrices_from_csv(CSV_V5B, shapes=shapes)
+    log.info(f"loaded {len(matrices)} matrix specs from {CSV_V5B} "
+             f"(shapes inferred from {MODEL} config)")
 
     tokenizer = AutoTokenizer.from_pretrained(MODEL)
     ds = load_dataset("Salesforce/wikitext", "wikitext-2-raw-v1", split="train")

@@ -160,26 +160,55 @@ class JointAllocation:
 # ---------------------------------------------------------------------------
 
 
-def load_matrices_from_csv(csv_path: str | Path) -> list[MatrixSpec]:
-    """Load matrix specs from a CSV with columns: name, shape_m, shape_n,
-    s1_eff, s2_eff.
+def load_matrices_from_csv(
+    csv_path: str | Path,
+    shapes: dict[str, tuple[int, int]] | None = None,
+) -> list[MatrixSpec]:
+    """Load matrix specs from a whitening-aware entropy_lens CSV.
 
-    This is the expected output format of a whitening-aware entropy_lens
-    run (see whiten.whitened_svdvals -> spectral.compute_s1/compute_s2),
-    analogous to allocator.load_layers_from_csv but keyed on the
-    data-metric statistics instead of raw S1.
+    Needs, per matrix: name, s1_eff, s2_eff, and the (m, n) shape. Shapes
+    come from one of two places:
+      - explicit `shape_m`/`shape_n` columns in the CSV, or
+      - a `shapes` dict keyed by `proj_type` (e.g. from
+        allocator.infer_shapes_from_config), used when the CSV only carries
+        the derived spectral stats. The whitened CSVs produced by
+        experiments/runpod_v5.py fall in this second case: they store
+        s1_eff/s2_eff/dmin_eff but not the matrix dimensions, so callers pass
+        `shapes` inferred from the model config.
+
+    Analogous to allocator.load_layers_from_csv (same shapes-fallback
+    pattern) but keyed on the data-metric statistics instead of raw S1.
     """
     with open(csv_path) as f:
         reader = csv.DictReader(f)
+        fieldnames = reader.fieldnames or []
         rows = list(reader)
+
+    has_cols = "shape_m" in fieldnames and "shape_n" in fieldnames
 
     matrices = []
     for row in rows:
+        if has_cols:
+            m, n = int(row["shape_m"]), int(row["shape_n"])
+        elif shapes is not None:
+            proj_type = row["proj_type"]
+            if proj_type not in shapes:
+                raise ValueError(
+                    f"proj_type '{proj_type}' not in shapes dict "
+                    f"(available: {list(shapes.keys())})"
+                )
+            m, n = shapes[proj_type]
+        else:
+            raise ValueError(
+                f"CSV {csv_path} has no shape_m/shape_n columns; pass a "
+                f"`shapes` dict keyed by proj_type (e.g. from "
+                f"allocator.infer_shapes_from_config). Columns: {fieldnames}"
+            )
         matrices.append(
             MatrixSpec(
                 name=row["name"],
-                shape_m=int(row["shape_m"]),
-                shape_n=int(row["shape_n"]),
+                shape_m=m,
+                shape_n=n,
                 s1_eff=float(row["s1_eff"]),
                 s2_eff=float(row["s2_eff"]),
             )
