@@ -104,6 +104,7 @@ def cholesky_factor(
     cov: torch.Tensor,
     damp: float = 1e-6,
     max_damp: float = 1e-1,
+    channel_prescale: bool = True,
 ) -> tuple[torch.Tensor, bool, float]:
     """Factor C ~= L L^T with escalating ridge damping and eigh fallback.
 
@@ -112,33 +113,59 @@ def cholesky_factor(
     and escalate x10 until it succeeds; if it never does, fall back to an
     eigendecomposition with clamped eigenvalues (L is then NOT triangular).
 
+    Why channel_prescale (found empirically, 2026-07-12 on Mistral 7B): raw
+    activation covariances have wildly heterogeneous per-channel variance
+    (the "massive activations" phenomenon in late transformer layers: a
+    handful of channels run 10-100x hotter than the rest). A ridge lambda*I
+    floors ALL channels equally, so it either does nothing to the hot
+    channels or over-regularizes the cold ones once escalated enough to fix
+    the hot ones -- this is why mlp_in damping needed on Mistral 7B rose
+    ~180x from layer 0 to layer 28 (0.0088 -> 1.58) and correlated at -0.88
+    with S1_eff: heavy uniform damping was collapsing the whitened spectrum
+    as an artifact, not a real compressibility signal. The fix (SmoothQuant/
+    AWQ-style): rescale each channel by its own std s_j = sqrt(diag(C)_j)
+    before damping, so lambda*I becomes a per-channel-relative ridge
+    lambda*diag(s^2) in the original units. Cold channels no longer need to
+    borrow the hot channels' damping budget.
+
     Args:
         cov: (n, n) symmetric PSD matrix.
-        damp: initial ridge as a fraction of mean(diag(cov)).
+        damp: initial ridge as a fraction of mean(diag(normalized cov)).
         max_damp: largest ridge fraction to try before the eigh fallback.
+        channel_prescale: rescale by per-channel std before damping (see above).
 
     Returns:
-        (L, triangular, lam) with C + lam*I = L @ L.T. `triangular` tells
+        (L, triangular, lam) with C + lam*diag(s^2) = L @ L.T (s = ones if
+        channel_prescale=False, so C + lam*I as before). `triangular` tells
         downstream solvers whether L is lower-triangular.
     """
     c = cov.to(torch.float64)
     c = 0.5 * (c + c.T)
-    mean_diag = float(c.diagonal().mean().clamp_min(1e-30))
-    eye = torch.eye(c.shape[0], dtype=torch.float64)
+    n = c.shape[0]
+
+    if channel_prescale:
+        s = c.diagonal().clamp_min(1e-30).sqrt()
+        c_n = c / torch.outer(s, s)
+    else:
+        s = torch.ones(n, dtype=torch.float64)
+        c_n = c
+
+    mean_diag = float(c_n.diagonal().mean().clamp_min(1e-30))
+    eye = torch.eye(n, dtype=torch.float64)
 
     lam = damp * mean_diag
     while lam <= max_damp * mean_diag:
         try:
-            L = torch.linalg.cholesky(c + lam * eye)
-            return L, True, lam
+            L_n = torch.linalg.cholesky(c_n + lam * eye)
+            return s.unsqueeze(1) * L_n, True, lam
         except torch.linalg.LinAlgError:
             lam *= 10.0
 
     logger.warning("Cholesky failed up to damp=%g; using eigh fallback", max_damp)
-    evals, evecs = torch.linalg.eigh(c)
+    evals, evecs = torch.linalg.eigh(c_n)
     evals = evals.clamp_min(damp * mean_diag)
-    L = evecs @ torch.diag(torch.sqrt(evals))
-    return L, False, damp * mean_diag
+    L_n = evecs @ torch.diag(torch.sqrt(evals))
+    return s.unsqueeze(1) * L_n, False, damp * mean_diag
 
 
 def whitened_svdvals(

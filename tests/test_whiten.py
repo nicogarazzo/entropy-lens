@@ -17,6 +17,10 @@ def _anisotropic_cov(n: int, condition: float = 1e4) -> torch.Tensor:
     return (q * evals) @ q.T
 
 
+def _channel_scale(c: torch.Tensor) -> torch.Tensor:
+    return c.diagonal().clamp_min(1e-30).sqrt()
+
+
 class TestCholeskyFactor:
     def test_reconstructs_well_conditioned(self):
         c = _anisotropic_cov(32, condition=100)
@@ -32,8 +36,9 @@ class TestCholeskyFactor:
         L, triangular, lam = cholesky_factor(c)
         assert torch.isfinite(L).all()
         rec = L @ L.T
-        # Reconstruction matches C + lam*I
-        target = c + lam * torch.eye(32, dtype=torch.float64)
+        # Reconstruction matches C + lam*diag(s^2), s = per-channel std
+        s = _channel_scale(c)
+        target = c + lam * torch.diag(s ** 2)
         rel_err = torch.norm(rec - target) / torch.norm(target)
         assert rel_err < 1e-6
 
@@ -44,6 +49,33 @@ class TestCholeskyFactor:
         c[0, 0] = -1e6  # make it non-PSD beyond what damping fixes
         L, triangular, lam = cholesky_factor(c, damp=1e-6, max_damp=1e-6)
         assert torch.isfinite(L).all()
+
+    def test_channel_prescale_applies_uniform_relative_ridge(self):
+        # The Mistral 7B mlp_in problem: one "massive activation" channel runs
+        # ~50x hotter than the rest. A uniform ridge lam*I perturbs cold
+        # channels far more (relatively) than the hot one, distorting the
+        # whitened spectrum. A per-channel ridge lam*diag(s^2) perturbs every
+        # channel by the same RELATIVE amount, which is what preserves S1_eff.
+        base = _anisotropic_cov(48, condition=50)
+        base[0, :] *= 50.0
+        base[:, 0] *= 50.0  # channel 0 dominates the diagonal
+
+        def rel_diag_perturbation(prescale):
+            L, _, _ = cholesky_factor(base, damp=1e-3, channel_prescale=prescale)
+            rec = L @ L.T
+            return ((rec - base).diagonal() / base.diagonal()).abs()
+
+        cv_uniform = rel_diag_perturbation(False).std() / rel_diag_perturbation(False).mean()
+        cv_scaled = rel_diag_perturbation(True).std() / rel_diag_perturbation(True).mean()
+        # Prescale makes the relative ridge nearly constant across channels.
+        assert cv_scaled < cv_uniform / 5.0
+
+    def test_channel_prescale_preserves_triangularity(self):
+        c = _anisotropic_cov(24, condition=200)
+        L, triangular, _ = cholesky_factor(c, channel_prescale=True)
+        assert triangular
+        upper = torch.triu(L, diagonal=1)
+        assert torch.allclose(upper, torch.zeros_like(upper), atol=1e-8)
 
 
 class TestWhitenedSvdvals:

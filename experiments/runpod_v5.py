@@ -44,8 +44,13 @@ from entropy_lens.whiten import (
 
 MODEL = "mistralai/Mistral-7B-v0.3"
 RAW_CSV = "results/mistralai_Mistral-7B-v0.3/results.csv"
-OUT_CSV = "/workspace/results_v5_whitened.csv"
-OUT_JSON = "/workspace/results_v5_fit.json"
+# v5b re-run (2026-07-12): cholesky_factor now defaults to channel_prescale=True
+# (per-channel relative ridge), fixing the massive-activation damping artifact
+# that inflated damping ~180x with depth in mlp_in/attn_in and collapsed S1_eff
+# as an artifact. Writes to _v5b paths so the canonical v5a data (committed in
+# results/) is preserved for the old-vs-new comparison.
+OUT_CSV = "/workspace/results_v5b_whitened.csv"
+OUT_JSON = "/workspace/results_v5b_fit.json"
 N_CALIB_SEQS = 256
 SEQ_LEN = 512
 LAYERS_PER_CHUNK = 4  # bounds GPU memory: ~1 GB of covariances per layer
